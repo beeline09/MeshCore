@@ -7,6 +7,10 @@
 
 #include <helpers/ESP32Board.h>
 
+#ifndef ADC_MULTIPLIER
+  #define ADC_MULTIPLIER 6.52
+#endif
+
 class Heltec_CT62_Board : public ESP32Board {
   uint32_t gpio_state = 0;
 
@@ -36,6 +40,14 @@ public:
 #endif
   }
 
+  float getAdcMultiplier() const override {
+  #ifdef PIN_VBAT_READ
+    return (adc_mult == 0.0f) ? ADC_MULTIPLIER : adc_mult;
+  #else
+    return 0.0f;
+  #endif
+  }
+
   uint16_t getBattMilliVolts() override {
   #ifdef PIN_VBAT_READ
     analogReadResolution(12);         // ESP32-C3 ADC is 12-bit - 3.3/4096 (ref voltage/max counts)
@@ -45,7 +57,7 @@ public:
     }
     raw = raw / 8;
 
-    return ((6.52 * raw) / 1024.0) * 1000;
+    return ((getAdcMultiplier() * raw) / 1024.0) * 1000;
   #else
     return 0;  // not supported
   #endif

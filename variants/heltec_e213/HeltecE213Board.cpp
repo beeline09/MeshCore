@@ -59,7 +59,7 @@ void HeltecE213Board::begin() {
 
     digitalWrite(PIN_ADC_CTRL, LOW);
 
-    return (5.42 * (3.3 / 1024.0) * raw) * 1000;
+    return (getAdcMultiplier() * (3.3 / 1024.0) * raw) * 1000;
   }
 
   const char* HeltecE213Board::getManufacturerName() const {
