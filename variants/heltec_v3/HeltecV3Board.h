@@ -79,6 +79,10 @@ public:
     enterDeepSleep(0);
   }
 
+  float getAdcMultiplier() const override {
+    return (adc_mult == 0.0f) ? ADC_MULTIPLIER : adc_mult;
+  }
+
   uint16_t getBattMilliVolts() override {
     analogReadResolution(10);
     digitalWrite(PIN_ADC_CTRL, adc_active_state);
@@ -91,7 +95,7 @@ public:
 
     digitalWrite(PIN_ADC_CTRL, !adc_active_state);
 
-    return (ADC_MULTIPLIER * (3.3 / 1024.0) * raw) * 1000;
+    return (getAdcMultiplier() * (3.3 / 1024.0) * raw) * 1000;
   }
 
   const char* getManufacturerName() const override {

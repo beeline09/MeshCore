@@ -18,6 +18,7 @@ class ESP32Board : public mesh::MainBoard {
 protected:
   uint8_t startup_reason;
   bool inhibit_sleep = false;
+  float adc_mult = 0.0f;  // 0.0f = use board default
 
 public:
   void begin() {
@@ -101,6 +102,23 @@ public:
   }
 #endif
 
+  bool setAdcMultiplier(float multiplier) override {
+#ifdef PIN_VBAT_READ
+    adc_mult = multiplier;
+    return true;
+#else
+    return false;
+#endif
+  }
+
+  float getAdcMultiplier() const override {
+#ifdef PIN_VBAT_READ
+    return (adc_mult == 0.0f) ? 2.0f : adc_mult;
+#else
+    return 0.0f;
+#endif
+  }
+
   uint16_t getBattMilliVolts() override {
   #ifdef PIN_VBAT_READ
     analogReadResolution(12);
@@ -111,7 +129,7 @@ public:
     }
     raw = raw / 4;
 
-    return (2 * raw);
+    return (uint16_t)(getAdcMultiplier() * raw);
   #else
     return 0;  // not supported
   #endif
