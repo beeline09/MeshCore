@@ -107,6 +107,18 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   NeighbourInfo neighbours[MAX_NEIGHBOURS];
 #endif
   CayenneLPP telemetry;
+  struct TsSample { uint32_t ts; uint32_t pub_hash; };
+  TsSample _ts_buf[10];
+  int      _ts_buf_pos = 0;
+  int      _ts_buf_count = 0;
+  uint32_t _ts_sync_count = 0;
+  uint32_t _ts_advert_count = 0;   // total adverts received (any timestamp)
+  uint32_t _ts_valid_count = 0;    // adverts with valid timestamp range
+  uint32_t _ts_last_sync = 0;      // unix ts of last successful sync
+  int32_t  _ts_last_adj = 0;       // seconds adjusted on last sync
+  int      _ts_best_cluster = 0;   // best cluster seen so far (for diagnostics)
+  void tryTimeSyncFromBuf();
+
   unsigned long set_radio_at, revert_radio_at;
   float pending_freq;
   float pending_bw;
