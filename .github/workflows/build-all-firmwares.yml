@@ -1,0 +1,100 @@
+name: Build All Firmwares
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Firmware version (e.g. 1.15.0b1)'
+        required: true
+        default: '1.15.0b1'
+  push:
+    tags:
+      - '1.15.0b*'
+
+jobs:
+
+  build-companion:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Clone Repo
+        uses: actions/checkout@v4
+
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-environment
+
+      - name: Build Companion Firmwares
+        env:
+          FIRMWARE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+        run: /usr/bin/env bash build.sh build-companion-firmwares
+
+      - name: Upload Companion Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-firmwares
+          path: out
+
+  build-repeater:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Clone Repo
+        uses: actions/checkout@v4
+
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-environment
+
+      - name: Build Repeater Firmwares
+        env:
+          FIRMWARE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+        run: /usr/bin/env bash build.sh build-repeater-firmwares
+
+      - name: Upload Repeater Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: repeater-firmwares
+          path: out
+
+  build-room-server:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Clone Repo
+        uses: actions/checkout@v4
+
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-environment
+
+      - name: Build Room Server Firmwares
+        env:
+          FIRMWARE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+        run: /usr/bin/env bash build.sh build-room-server-firmwares
+
+      - name: Upload Room Server Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: room-server-firmwares
+          path: out
+
+  release:
+    needs: [build-companion, build-repeater, build-room-server]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+
+      - name: Download All Firmware Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-firmwares
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body: ""
+          draft: true
+          files: all-firmwares/*
