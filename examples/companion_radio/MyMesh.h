@@ -90,6 +90,15 @@ struct AdvertPath {
 
 class MyMesh : public BaseChatMesh, public DataStoreHost {
 public:
+  enum TimeSource : uint8_t {
+    TIME_SOURCE_UNSET = 0,
+    TIME_SOURCE_CONTACTS,
+    TIME_SOURCE_ADVERT,
+    TIME_SOURCE_APP,
+    TIME_SOURCE_RTC,
+    TIME_SOURCE_GPS
+  };
+
   MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMeshTables &tables, DataStore& store, AbstractUITask* ui=NULL);
 
   void begin(bool has_display);
@@ -105,6 +114,12 @@ public:
   void enterCLIRescue();
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);
+  TimeSource getTimeSource() const { return _time_source; }
+  uint32_t getTimeSyncCount() const { return _ts_sync_count; }
+  uint32_t getTimeLastSync() const { return _ts_last_sync; }
+  int32_t getTimeLastAdjustment() const { return _ts_last_adj; }
+  bool hasRecentAppTimeSet() const;
+  const char *getTimeSourceLabel() const;
 
 protected:
   float getAirtimeBudgetFactor() const override;
@@ -148,6 +163,8 @@ protected:
   uint8_t onContactRequest(const ContactInfo &contact, uint32_t sender_timestamp, const uint8_t *data,
                            uint8_t len, uint8_t *reply) override;
   void onContactResponse(const ContactInfo &contact, const uint8_t *data, uint8_t len) override;
+  void onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp,
+                    const uint8_t* app_data, size_t app_data_len) override;
   void onControlDataRecv(mesh::Packet *packet) override;
   void onRawDataRecv(mesh::Packet *packet) override;
   void onTraceRecv(mesh::Packet *packet, uint32_t tag, uint32_t auth_code, uint8_t flags,
@@ -230,6 +247,20 @@ private:
   uint8_t cmd_frame[MAX_FRAME_SIZE + 1];
   uint8_t out_frame[MAX_FRAME_SIZE + 1];
   CayenneLPP telemetry;
+  struct TsSample { uint32_t ts; uint32_t pub_hash; };
+  TsSample _ts_buf[10];
+  int      _ts_buf_pos = 0;
+  int      _ts_buf_count = 0;
+  uint32_t _ts_sync_count = 0;
+  uint32_t _ts_advert_count = 0;
+  uint32_t _ts_valid_count = 0;
+  uint32_t _ts_last_sync = 0;
+  int32_t  _ts_last_adj = 0;
+  int      _ts_best_cluster = 0;
+  TimeSource _time_source = TIME_SOURCE_UNSET;
+  uint32_t _app_time_lock_until = 0;
+  void tryTimeSyncFromBuf();
+  void noteTimeSource(TimeSource source);
 
   struct Frame {
     uint8_t len;

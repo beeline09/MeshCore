@@ -330,6 +330,13 @@ public:
       display.setTextSize(8);
       display.drawTextCentered(display.width() / 2, display.height() / 2 - 32, timeBuf);
       display.setTextSize(1);
+      char sourceBuf[32];
+      snprintf(sourceBuf, sizeof(sourceBuf), "%s", the_mesh.getTimeSourceLabel());
+      if (the_mesh.getTimeSyncCount() > 0 && the_mesh.getTimeSource() == MyMesh::TIME_SOURCE_ADVERT) {
+        snprintf(sourceBuf, sizeof(sourceBuf), "%s %+lds",
+                 the_mesh.getTimeSourceLabel(), (long)the_mesh.getTimeLastAdjustment());
+      }
+      display.drawTextCentered(display.width() / 2, display.height() - 10, sourceBuf);
       return 60000;  // refresh once per minute
     } else if (_page == HomePage::RECENT) {
       the_mesh.getRecentlyHeard(recent, UI_RECENT_LIST_SIZE);
@@ -592,6 +599,7 @@ public:
   struct MsgEntry {
     uint32_t timestamp;
     uint8_t  path_len;       // 0xFF = direct, otherwise hop count (group)
+    bool     is_pm;
     char     from_name[32];  // sender name (direct) or channel name (group)
     char     msg[MAX_TEXT_LEN];
   };
@@ -601,16 +609,27 @@ public:
 private:
   MsgEntry unread[MAX_UNREAD_MSGS];
 
-public:
-  void addPreview(uint8_t path_len, const char* from_name, const char* msg) {
+  int indexFromNewest(int offset) const {
+    return (head - offset + MAX_UNREAD_MSGS) % MAX_UNREAD_MSGS;
+  }
+
+  void pushEntry(const MsgEntry& entry) {
     head = (head + 1) % MAX_UNREAD_MSGS;
     if (num_unread < MAX_UNREAD_MSGS) num_unread++;
-    auto p = &unread[head];
+    unread[head] = entry;
+  }
+
+public:
+  void addPreview(uint8_t path_len, const char* from_name, const char* msg, bool is_pm) {
+    MsgEntry entry = {};
+    auto p = &entry;
     p->timestamp = _rtc->getCurrentTime();
     p->path_len  = path_len;
+    p->is_pm     = is_pm;
     strncpy(p->from_name, from_name, sizeof(p->from_name) - 1);
     p->from_name[sizeof(p->from_name) - 1] = '\0';
     StrHelper::strncpy(p->msg, msg, sizeof(p->msg));
+    pushEntry(entry);
   }
 
   // Peek at the current (latest) unread message without consuming it
@@ -619,11 +638,44 @@ public:
     return &unread[head];
   }
 
+  const MsgEntry* peekLatestPM() const {
+    for (int i = 0; i < num_unread; i++) {
+      const MsgEntry* p = &unread[indexFromNewest(i)];
+      if (p->is_pm) return p;
+    }
+    return nullptr;
+  }
+
   // Advance past the current message (mark as read) without switching screens
   void consumeOne() {
     if (num_unread == 0) return;
     head = (head + MAX_UNREAD_MSGS - 1) % MAX_UNREAD_MSGS;
     num_unread--;
+  }
+
+  bool consumeLatestPM() {
+    int target = -1;
+    for (int i = 0; i < num_unread; i++) {
+      if (unread[indexFromNewest(i)].is_pm) {
+        target = i;
+        break;
+      }
+    }
+    if (target < 0) return false;
+
+    MsgEntry kept[MAX_UNREAD_MSGS];
+    int kept_count = 0;
+    for (int i = 0; i < num_unread; i++) {
+      if (i == target) continue;
+      kept[kept_count++] = unread[indexFromNewest(i)];
+    }
+
+    num_unread = 0;
+    head = MAX_UNREAD_MSGS - 1;
+    for (int i = kept_count - 1; i >= 0; i--) {
+      pushEntry(kept[i]);
+    }
+    return true;
   }
 
   int unreadCount() const { return num_unread; }
@@ -815,7 +867,7 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   bool on_clock = isEinkDisplay() && (curr == home) &&
                   ((HomeScreen*)home)->isOnClockPage();
 
-  ((MsgPreviewScreen*)msg_preview)->addPreview(path_len, from_name, text);
+  ((MsgPreviewScreen*)msg_preview)->addPreview(path_len, from_name, text, is_pm);
 
   if (on_clock) {
     if (is_pm) {
@@ -841,7 +893,7 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
 
 bool UITask::peekTopMsg(ClockPMInfo& out) const {
   if (!msg_preview) return false;
-  const MsgPreviewScreen::MsgEntry* p = ((MsgPreviewScreen*)msg_preview)->peekCurrent();
+  const MsgPreviewScreen::MsgEntry* p = ((MsgPreviewScreen*)msg_preview)->peekLatestPM();
   if (!p) return false;
   out.path_len = p->path_len;
   strncpy(out.from_name, p->from_name, sizeof(out.from_name) - 1);
@@ -852,7 +904,7 @@ bool UITask::peekTopMsg(ClockPMInfo& out) const {
 }
 
 void UITask::consumeTopMsg() {
-  if (msg_preview) ((MsgPreviewScreen*)msg_preview)->consumeOne();
+  if (msg_preview) ((MsgPreviewScreen*)msg_preview)->consumeLatestPM();
 }
 
 int UITask::getUnreadMsgCount() const {

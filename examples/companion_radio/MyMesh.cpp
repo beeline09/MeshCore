@@ -144,6 +144,13 @@
 #define AUTO_ADD_ROOM_SERVER      (1 << 3)  // 0x08 - auto-add Room Server (ADV_TYPE_ROOM)
 #define AUTO_ADD_SENSOR           (1 << 4)  // 0x10 - auto-add Sensor (ADV_TYPE_SENSOR)
 
+static const uint32_t MIN_VALID_TS = 1577836800; // 2020-01-01 UTC
+static const uint32_t MAX_VALID_TS = 2524608000; // 2050-01-01 UTC
+static const uint32_t DRIFT_THRESHOLD = 120;
+static const uint32_t MAX_JUMP = 36000;
+static const uint32_t CLUSTER_WINDOW = 60;
+static const uint32_t APP_TIME_HOLDOFF_SECS = 6 * 60 * 60;
+
 void MyMesh::writeOKFrame() {
   uint8_t buf[1];
   buf[0] = RESP_CODE_OK;
@@ -470,6 +477,85 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
     }
   }
 #endif
+}
+
+void MyMesh::tryTimeSyncFromBuf() {
+  uint32_t current = getRTCClock()->getCurrentTime();
+  bool unset = !getRTCClock()->isTimeReliable() && (_ts_sync_count == 0) && !hasRecentAppTimeSet();
+  int n = unset ? min(_ts_buf_count, 5) : min(_ts_buf_count, 10);
+  int quorum = unset ? 3 : 7;
+  if (_ts_buf_count < quorum) return;
+
+  uint32_t now = getRTCClock()->getCurrentTime();
+  if (hasRecentAppTimeSet() && now < _app_time_lock_until) return;
+
+  uint32_t tmp[10];
+  for (int i = 0; i < n; i++) {
+    int idx = (_ts_buf_pos - 1 - i + 10) % 10;
+    tmp[i] = _ts_buf[idx].ts;
+  }
+  for (int i = 1; i < n; i++) {
+    uint32_t key = tmp[i];
+    int j = i - 1;
+    while (j >= 0 && tmp[j] > key) { tmp[j + 1] = tmp[j]; j--; }
+    tmp[j + 1] = key;
+  }
+
+  int best_count = 0, best_start = 0;
+  for (int i = 0; i < n; i++) {
+    int cnt = 0;
+    for (int j = i; j < n && tmp[j] - tmp[i] <= CLUSTER_WINDOW; j++) cnt++;
+    if (cnt > best_count) { best_count = cnt; best_start = i; }
+  }
+  int count = best_count;
+  if (count > _ts_best_cluster) _ts_best_cluster = count;
+  if (count < quorum) return;
+
+  int cluster_end = best_start;
+  while (cluster_end < n && tmp[cluster_end] - tmp[best_start] <= CLUSTER_WINDOW) cluster_end++;
+  uint32_t median = tmp[(best_start + cluster_end) / 2];
+
+  auto applySync = [&](uint32_t ts, int32_t adj) {
+    LocationProvider* gps = sensors.getLocationProvider();
+    if (gps != nullptr && gps->isEnabled() && gps->isValid()) {
+      gps->syncTime();
+      noteTimeSource(TIME_SOURCE_GPS);
+      MESH_DEBUG_PRINTLN("TimeSync: GPS re-sync requested (quorum drift %ld sec)", (long)adj);
+    } else {
+      getRTCClock()->setCurrentTime(ts);
+      noteTimeSource(TIME_SOURCE_ADVERT);
+      MESH_DEBUG_PRINTLN("TimeSync: clock set, adj %ld sec (quorum %d/%d)", (long)adj, count, n);
+    }
+    _ts_last_adj = adj;
+    _ts_last_sync = ts;
+    _ts_sync_count++;
+  };
+
+  if (unset) {
+    applySync(median, (int32_t)median - (int32_t)current);
+  } else {
+    uint32_t diff = (median > current) ? median - current : current - median;
+    if (diff > DRIFT_THRESHOLD && diff < MAX_JUMP) {
+      applySync(median, (int32_t)median - (int32_t)current);
+    }
+  }
+}
+
+void MyMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp,
+                          const uint8_t* app_data, size_t app_data_len) {
+  BaseChatMesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len);
+
+  _ts_advert_count++;
+  if (timestamp <= MIN_VALID_TS || timestamp >= MAX_VALID_TS) return;
+
+  _ts_valid_count++;
+  uint32_t pub_hash;
+  memcpy(&pub_hash, id.pub_key, 4);
+  _ts_buf[_ts_buf_pos] = { timestamp, pub_hash };
+  _ts_buf_pos = (_ts_buf_pos + 1) % 10;
+  if (_ts_buf_count < 10) _ts_buf_count++;
+
+  tryTimeSyncFromBuf();
 }
 
 bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
@@ -878,8 +964,30 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
 #endif
 }
 
+void MyMesh::noteTimeSource(TimeSource source) {
+  _time_source = source;
+}
+
+bool MyMesh::hasRecentAppTimeSet() const {
+  uint32_t now = getRTCClock()->getCurrentTime();
+  return _app_time_lock_until != 0 && now < _app_time_lock_until;
+}
+
+const char *MyMesh::getTimeSourceLabel() const {
+  switch (_time_source) {
+    case TIME_SOURCE_CONTACTS: return "CNT";
+    case TIME_SOURCE_ADVERT:   return "ADV";
+    case TIME_SOURCE_APP:      return "APP";
+    case TIME_SOURCE_RTC:      return "RTC";
+    case TIME_SOURCE_GPS:      return "GPS";
+    case TIME_SOURCE_UNSET:
+    default:                   return "---";
+  }
+}
+
 void MyMesh::begin(bool has_display) {
   BaseChatMesh::begin();
+  noteTimeSource(getRTCClock()->isTimeReliable() ? TIME_SOURCE_RTC : TIME_SOURCE_UNSET);
 
   if (!_store->loadMainIdentity(self_id)) {
     self_id = radio_new_identity(); // create new random identity
@@ -947,7 +1055,13 @@ void MyMesh::begin(bool has_display) {
 
   resetContacts();
   _store->loadContacts(this);
+  uint32_t rtc_before_contacts = getRTCClock()->getCurrentTime();
   bootstrapRTCfromContacts();
+  uint32_t rtc_after_contacts = getRTCClock()->getCurrentTime();
+  if (!getRTCClock()->isTimeReliable() && rtc_after_contacts > rtc_before_contacts &&
+      rtc_after_contacts > MIN_VALID_TS && rtc_after_contacts < MAX_VALID_TS) {
+    noteTimeSource(TIME_SOURCE_CONTACTS);
+  }
   addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
   _store->loadChannels(this);
 
@@ -1215,6 +1329,8 @@ void MyMesh::handleCmdFrame(size_t len) {
     uint32_t curr = getRTCClock()->getCurrentTime();
     if (secs >= curr) {
       getRTCClock()->setCurrentTime(secs);
+      _app_time_lock_until = secs + APP_TIME_HOLDOFF_SECS;
+      noteTimeSource(TIME_SOURCE_APP);
       writeOKFrame();
     } else {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
