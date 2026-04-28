@@ -22,6 +22,15 @@
 #define BATTERY_PIN          (17)
 #define ADC_RESOLUTION       12
 
+// nRF52 power management settings for a single-cell Li-ion/LiPo battery.
+// D17 maps to P0.31, which is AIN7 for LPCOMP wake measurements.
+// 3.35V boot lockout prevents unstable boot on a depleted cell. 7/16 VDD
+// yields a recovery wake threshold slightly above the boot threshold with the
+// board's ~2.5x battery divider.
+#define PWRMGT_VOLTAGE_BOOTLOCK 3350
+#define PWRMGT_LPCOMP_AIN 7
+#define PWRMGT_LPCOMP_REFSEL 11
+
 ////////////////////////////////////////////////////////////////////////////////
 // Number of pins
 

@@ -1,6 +1,25 @@
 #include <Arduino.h>
 #include "PromicroEinkV2Board.h"
 
+#ifdef NRF52_POWER_MANAGEMENT
+const PowerMgtConfig power_config = {
+  .lpcomp_ain_channel = PWRMGT_LPCOMP_AIN,
+  .lpcomp_refsel = PWRMGT_LPCOMP_REFSEL,
+  .voltage_bootlock = PWRMGT_VOLTAGE_BOOTLOCK
+};
+
+void PromicroEinkV2Board::initiateShutdown(uint8_t reason) {
+  digitalWrite(PIN_GPS_EN, LOW);
+
+  if (reason == SHUTDOWN_REASON_LOW_VOLTAGE ||
+      reason == SHUTDOWN_REASON_BOOT_PROTECT) {
+    configureVoltageWake(power_config.lpcomp_ain_channel, power_config.lpcomp_refsel);
+  }
+
+  enterSystemOff(reason);
+}
+#endif
+
 void PromicroEinkV2Board::begin() {
     NRF52BoardDCDC::begin();
     btn_prev_state = HIGH;
@@ -13,6 +32,11 @@ void PromicroEinkV2Board::begin() {
 
     // GPS power enable; LoRa is powered directly from 3.3V
     pinMode(PIN_GPS_EN, OUTPUT);
+#ifdef NRF52_POWER_MANAGEMENT
+    // Battery sense is on D17 -> P0.31 -> AIN7. We enforce the same Li-ion
+    // startup threshold as the classic promicro before powering GPS.
+    checkBootVoltage(&power_config);
+#endif
     digitalWrite(PIN_GPS_EN, HIGH);
     delay(10);
 

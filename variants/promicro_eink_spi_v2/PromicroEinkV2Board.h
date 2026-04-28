@@ -37,6 +37,9 @@ class PromicroEinkV2Board : public NRF52BoardDCDC {
 protected:
   uint8_t btn_prev_state;
   float adc_mult = ADC_MULTIPLIER;
+#ifdef NRF52_POWER_MANAGEMENT
+  void initiateShutdown(uint8_t reason) override;
+#endif
 
 public:
   PromicroEinkV2Board() : NRF52Board("ProMicroEinkV2_OTA") {}
