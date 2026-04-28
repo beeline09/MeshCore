@@ -634,7 +634,7 @@ void MyMesh::tryTimeSyncFromBuf() {
   static const uint32_t MIN_VALID_TS    = 1577836800; // 2020-01-01 UTC
   static const uint32_t MAX_VALID_TS    = 2524608000; // 2050-01-01 UTC
   static const uint32_t DRIFT_THRESHOLD = 120;
-  static const uint32_t MAX_JUMP        = 3600;
+  static const uint32_t MAX_JUMP        = 36000;
   static const uint32_t CLUSTER_WINDOW  = 60;
 
   uint32_t current = getRTCClock()->getCurrentTime();
