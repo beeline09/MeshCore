@@ -7,34 +7,16 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Firmware version (e.g. v1.15.0b4)'
+        description: 'Firmware version (e.g. 1.15.0b1)'
         required: true
-        default: 'v1.15.0b4'
+        default: '1.15.0b1'
   push:
     tags:
-      - 'all-v*'
+      - '1.15.0b*'
 
 jobs:
 
-  setup:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.ver.outputs.version }}
-    steps:
-      - name: Resolve Version
-        id: ver
-        shell: bash
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            VER="${{ inputs.version }}"
-          else
-            TAG="${GITHUB_REF#refs/tags/}"
-            VER="${TAG##*-}"
-          fi
-          echo "version=$VER" >> $GITHUB_OUTPUT
-
   build-companion:
-    needs: setup
     runs-on: ubuntu-latest
     steps:
 
@@ -46,7 +28,7 @@ jobs:
 
       - name: Build Companion Firmwares
         env:
-          FIRMWARE_VERSION: ${{ needs.setup.outputs.version }}
+          FIRMWARE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
         run: /usr/bin/env bash build.sh build-companion-firmwares
 
       - name: Upload Companion Artifacts
@@ -56,7 +38,6 @@ jobs:
           path: out
 
   build-repeater:
-    needs: setup
     runs-on: ubuntu-latest
     steps:
 
@@ -68,7 +49,7 @@ jobs:
 
       - name: Build Repeater Firmwares
         env:
-          FIRMWARE_VERSION: ${{ needs.setup.outputs.version }}
+          FIRMWARE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
         run: /usr/bin/env bash build.sh build-repeater-firmwares
 
       - name: Upload Repeater Artifacts
@@ -78,7 +59,6 @@ jobs:
           path: out
 
   build-room-server:
-    needs: setup
     runs-on: ubuntu-latest
     steps:
 
@@ -90,7 +70,7 @@ jobs:
 
       - name: Build Room Server Firmwares
         env:
-          FIRMWARE_VERSION: ${{ needs.setup.outputs.version }}
+          FIRMWARE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
         run: /usr/bin/env bash build.sh build-room-server-firmwares
 
       - name: Upload Room Server Artifacts
@@ -100,7 +80,7 @@ jobs:
           path: out
 
   release:
-    needs: [setup, build-companion, build-repeater, build-room-server]
+    needs: [build-companion, build-repeater, build-room-server]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
@@ -114,7 +94,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ needs.setup.outputs.version }}
+          name: ${{ github.ref_name }}
           body: ""
           draft: true
           files: all-firmwares/*
