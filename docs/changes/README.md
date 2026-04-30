@@ -1,6 +1,6 @@
-# Changes vs upstream (branch: Cyrillic_supp4all → main)
+# Изменения относительно upstream (ветка: south_edition)
 
-Документация изменений текущей ветки относительно `main`.
+Документация изменений кастомной ветки `south_edition` относительно `main` (upstream).
 
 | Файл | Область | Краткое описание |
 |------|---------|-----------------|
@@ -12,3 +12,7 @@
 | [eink-clock-page.md](eink-clock-page.md) | `UITask.cpp`, `UITask.h`, display drivers | Страница часов для eInk: крупные часы + inline-просмотр PM без смены экрана |
 | [eink-display-rotation.md](eink-display-rotation.md) | `src/helpers/ui/E213Display.cpp`, `src/helpers/ui/E290Display.cpp` | Поддержка `DISPLAY_ROTATION` для eInk-драйверов E213/E290 |
 | [firmware-version-convention.md](firmware-version-convention.md) | `git_version.py`, `platformio.ini`, `MyMesh.h` | Версия прошивки с git-хешем и датой; схема `v1.15.1b1` для кастомных сборок |
+| [repeater-time-sync.md](repeater-time-sync.md) | `examples/simple_repeater/`, `src/MeshCore.h` | Синхронизация часов ретранслятора через advert-таймстемпы (кворум + медиана) |
+| [companion-eink-clock-timesync.md](companion-eink-clock-timesync.md) | `examples/companion_radio/`, `ui-new/UITask.cpp` | Тайм-синк advert'ами в companion + метка источника на CLOCK + фикс PM-оверлея |
+| [promicro-power-management.md](promicro-power-management.md) | `variants/promicro/`, `variants/promicro_eink_spi_v2/` | Управление питанием nRF52 ProMicro (Phase 1): LPCOMP + VBUS wake |
+| [adc-multiplier.md](adc-multiplier.md) | `src/helpers/ESP32Board.h`, `variants/heltec_*/` | Runtime-множитель АЦП для калибровки напряжения батареи ESP32 |

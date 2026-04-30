@@ -1,4 +1,4 @@
-# eInk display rotation build flag support
+# Поддержка поворота экрана eInk через build-флаг
 
 **Файлы:** `src/helpers/ui/E213Display.cpp`, `src/helpers/ui/E290Display.cpp`
 
