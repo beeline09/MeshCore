@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 
-# Post-build script: automatically converts firmware.hex to firmware.uf2
-# for nRF52 targets using the bundled uf2conv.py tool.
+# Adds PlatformIO post-processing to convert hex files to uf2 files
 
 import os
 
@@ -22,4 +21,11 @@ def create_uf2_action(source, target, env):
     )
     env.Execute(uf2_cmd)
 
-env.AddPostAction(firmware_hex, create_uf2_action)
+env.AddCustomTarget(
+    name="create_uf2",
+    dependencies=firmware_hex,
+    actions=create_uf2_action,
+    title="Create UF2 file",
+    description="Use uf2conv to convert hex binary into uf2",
+    always_build=True,
+)
