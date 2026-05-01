@@ -4,8 +4,9 @@
 #ifdef NRF52_POWER_MANAGEMENT
 const PowerMgtConfig power_config = {
   .lpcomp_ain_channel = PWRMGT_LPCOMP_AIN,
-  .lpcomp_refsel = PWRMGT_LPCOMP_REFSEL,
-  .voltage_bootlock = PWRMGT_VOLTAGE_BOOTLOCK
+  .lpcomp_refsel      = PWRMGT_LPCOMP_REFSEL,
+  .voltage_bootlock   = PWRMGT_VOLTAGE_BOOTLOCK,
+  .lpcomp_low_refsel  = PWRMGT_LPCOMP_LOW_REFSEL,
 };
 
 void PromicroEinkV2Board::initiateShutdown(uint8_t reason) {
@@ -36,6 +37,9 @@ void PromicroEinkV2Board::begin() {
     // Battery sense is on D17 -> P0.31 -> AIN7. We enforce the same Li-ion
     // startup threshold as the classic promicro before powering GPS.
     checkBootVoltage(&power_config);
+    if (power_config.lpcomp_low_refsel) {
+      configureLowVoltageAlert(power_config.lpcomp_ain_channel, power_config.lpcomp_low_refsel);
+    }
 #endif
     digitalWrite(PIN_GPS_EN, HIGH);
     delay(10);

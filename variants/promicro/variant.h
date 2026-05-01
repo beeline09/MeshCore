@@ -30,9 +30,10 @@
 // 3.35V boot lockout prevents unstable boot on a depleted cell. 7/16 VDD
 // yields a recovery wake threshold slightly above the boot threshold with the
 // board's ~2.5x battery divider.
-#define PWRMGT_VOLTAGE_BOOTLOCK 3350
-#define PWRMGT_LPCOMP_AIN 7
-#define PWRMGT_LPCOMP_REFSEL 11
+#define PWRMGT_VOLTAGE_BOOTLOCK  3350
+#define PWRMGT_LPCOMP_AIN        7
+#define PWRMGT_LPCOMP_REFSEL     12  // 9/16 VDD → wake from SYSTEMOFF (~3.9 V observed)
+#define PWRMGT_LPCOMP_LOW_REFSEL 11  // 7/16 VDD → runtime shutdown trigger (~3.0 V observed)
 
 ////////////////////////////////////////////////////////////////////////////////
 // Number of pins

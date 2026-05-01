@@ -16,17 +16,21 @@
 struct PowerMgtConfig {
   // LPCOMP wake configuration (for voltage recovery from SYSTEMOFF)
   uint8_t lpcomp_ain_channel;       // AIN0-7 for voltage sensing pin
-  uint8_t lpcomp_refsel;            // REFSEL value: 0-6=1/8..7/8, 7=ARef, 8-15=1/16..15/16
+  uint8_t lpcomp_refsel;            // REFSEL for UP event (wake): 0-6=1/8..7/8, 7=ARef, 8-15=1/16..15/16
 
   // Boot protection voltage threshold (millivolts)
   // Set to 0 to disable boot protection
   uint16_t voltage_bootlock;
+
+  // REFSEL for DOWN event (runtime low-voltage shutdown trigger); 0 = disabled
+  uint8_t lpcomp_low_refsel;
 };
 #endif
 
 class NRF52Board : public mesh::MainBoard {
 #ifdef NRF52_POWER_MANAGEMENT
   void initPowerMgr();
+  static NRF52Board* s_power_instance;
 #endif
 
 protected:
@@ -41,6 +45,7 @@ protected:
   bool checkBootVoltage(const PowerMgtConfig* config);
   void enterSystemOff(uint8_t reason);
   void configureVoltageWake(uint8_t ain_channel, uint8_t refsel);
+  void configureLowVoltageAlert(uint8_t ain_channel, uint8_t low_refsel);
   virtual void initiateShutdown(uint8_t reason);
 #endif
 
@@ -55,6 +60,7 @@ public:
   virtual void sleep(uint32_t secs) override;
 
 #ifdef NRF52_POWER_MANAGEMENT
+  static void lpcompDownHandler();
   bool isExternalPowered() override;
   uint16_t getBootVoltage() override { return boot_voltage_mv; }
   virtual uint32_t getResetReason() const override { return reset_reason; }

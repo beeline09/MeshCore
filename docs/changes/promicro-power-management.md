@@ -2,34 +2,156 @@
 
 ## Краткое описание
 
-Включён `NRF52_POWER_MANAGEMENT` (Phase 1) для:
+Включён `NRF52_POWER_MANAGEMENT` для:
 
-- `variants/promicro`
-- `variants/promicro_eink_spi_v2`
+- `variants/promicro` (Nice!nano / ProMicro nRF52840)
+- `variants/promicro_eink_spi_v2` (ProMicro + WeAct ePaper 2.13")
 
-Это добавляет защиту от загрузки при разряженной батарее, отслеживание причины выключения,
-LPCOMP-пробуждение по напряжению и VBUS-пробуждение через общую инфраструктуру `NRF52Board`,
-уже используемую другими поддерживаемыми nRF52-целями.
+Реализованы три уровня защиты:
+
+1. **Boot protection** — не запускается если батарея ниже 3350 мВ при старте.
+2. **Runtime low-voltage shutdown** — LPCOMP DOWN ISR вызывает контролируемый SYSTEMOFF при разрядке ниже ~3.0 В и сохраняет причину выключения.
+3. **Voltage-recovery wake** — LPCOMP UP + VBUS wake обеспечивают пробуждение после восстановления заряда (~3.9 В) или при подключении USB.
 
 ## Конфигурация
 
-Оба варианта используют:
+Оба варианта используют одинаковые параметры:
 
-- `PWRMGT_VOLTAGE_BOOTLOCK = 3350`
-- `PWRMGT_LPCOMP_AIN = 7`
-- `PWRMGT_LPCOMP_REFSEL = 11`
+| Параметр | Значение | Назначение |
+|----------|----------|------------|
+| `PWRMGT_VOLTAGE_BOOTLOCK` | 3350 | Boot lock порог (мВ), АЦП-измерение |
+| `PWRMGT_LPCOMP_AIN` | 7 | AIN7 = P0.31 = D17 (батарея через делитель) |
+| `PWRMGT_LPCOMP_REFSEL` | 12 | LPCOMP UP: 9/16 VDD → пробуждение ~3.9 В |
+| `PWRMGT_LPCOMP_LOW_REFSEL` | 11 | LPCOMP DOWN: 7/16 VDD → shutdown ~3.0 В |
 
-## Обоснование
+## Аппаратный контекст
 
-- Обе платы измеряют батарею на пине `D17`, который соответствует `P0.31` → `AIN7` — правильный вход LPCOMP.
-- Существующая конвертация батареи использует `ADC_MULTIPLIER = 1.815f`, что соответствует делителю напряжения ~2.5x.
-- `3350 мВ` — консервативный порог запуска Li-ion, снижающий риск нестабильной загрузки, brownout радиомодуля и порчи flash при разряженной ячейке.
-- `REFSEL = 11` выбирает `7/16 VDD` — пробуждение происходит только после восстановления напряжения выше порога загрузки, что снижает вероятность цикличного wake/shutdown по сравнению с `3/8 VDD`.
+Батарея подключена через резистивный делитель к `D17` → `P0.31` → `AIN7`.
+Калиброванный множитель АЦП: `ADC_MULTIPLIER = 1.815f` (compile-time), типичное
+реальное значение ~1.880 (runtime-калибровка через `set adc_multiplier`).
+
+**Особенность платы:** нRF52840 питается непосредственно от батареи (VDD ≈ V_bat),
+DC-DC конвертер включён (`NRF52BoardDCDC`). LPCOMP использует VDD как опорное
+напряжение, поэтому его пороги масштабируются с напряжением батареи.
+Калибровка порогов проведена экспериментально:
+
+| REFSEL | Дробь VDD | Наблюдаемый порог V_bat |
+|--------|-----------|------------------------|
+| 11 | 7/16 | ~3.0 В |
+| 12 | 9/16 | ~3.9 В |
+| 4 | 5/8 | ~4.15 В |
+
+АЦП использует внутренний опорный 0.6 В (независимо от VDD) — поэтому boot
+protection по АЦП всегда даёт абсолютное измерение, в отличие от LPCOMP.
+
+## Логика работы
+
+### Полный жизненный цикл
+
+```
+ [загрузка]
+     │
+     ▼
+ checkBootVoltage() — АЦП-измерение
+     │
+     ├─ USB подключён ──────────────────────────────► [загрузка продолжается]
+     │                                                        │
+     ├─ V_bat ≥ 3350 мВ ───────────────────────────► [загрузка продолжается]
+     │                                                        │
+     └─ V_bat < 3350 мВ ──► initiateShutdown(BOOT_PROTECT)   │
+                                      │                       │
+                                      ▼                       ▼
+                             configureVoltageWake()  configureLowVoltageAlert()
+                             (LPCOMP UP, REFSEL=12)  (LPCOMP DOWN, REFSEL=11)
+                             (VBUS wake)              ISR вооружён
+                                      │                       │
+                                      ▼               [устройство работает]
+                             enterSystemOff()                  │
+                                      │               батарея садится < ~3.0 В
+                                      │                       │
+                             [SYSTEMOFF]              LPCOMP DOWN → ISR
+                                      │                       │
+                             ┌────────┴────────┐     USB подключён?
+                             │                 │             │
+                         V_bat ↑ ~3.9 В    VBUS          Да │ Нет
+                         LPCOMP UP         подключён        │    │
+                             │                 │         [пропуск] │
+                             └────────┬────────┘              ▼
+                                      │             initiateShutdown(LOW_VOLTAGE)
+                                      ▼                       │
+                                   [reset]          configureVoltageWake()
+                                      │             (LPCOMP UP, REFSEL=12)
+                                      └──────────── (VBUS wake)
+                                                              │
+                                                    enterSystemOff()
+                                                              │
+                                                         [SYSTEMOFF]
+```
+
+### Boot protection (АЦП)
+
+- Запускается в `begin()` до включения питания радиомодуля
+- Использует `getBattMilliVolts()` с внутренним опорным 0.6 В — абсолютное измерение, не зависит от VDD
+- Пропускается если `isExternalPowered()` = true (VBUS детектирован)
+- При срабатывании: `initiateShutdown(BOOT_PROTECT)` → `configureVoltageWake()` → `enterSystemOff()`
+
+### Runtime low-voltage shutdown (LPCOMP DOWN)
+
+- `configureLowVoltageAlert(AIN=7, REFSEL=11)` вызывается в `begin()` после `checkBootVoltage()`
+- LPCOMP настроен на DOWN-событие (нисходящее пересечение порога)
+- ISR `LPCOMP_COMP_IRQHandler`: проверяет `EVENTS_DOWN`, вызывает `lpcompDownHandler()`
+- `lpcompDownHandler()`: если `!isExternalPowered()` → `initiateShutdown(LOW_VOLTAGE)`
+- При USB подключённом: ISR срабатывает но shutdown **не происходит** — устройство продолжает работу пока заряжается встроенным зарядником платы
+
+### Voltage-recovery wake (LPCOMP UP + VBUS)
+
+Вызывается из `initiateShutdown()` при причинах `LOW_VOLTAGE` и `BOOT_PROTECT`:
+
+- `configureVoltageWake(AIN=7, REFSEL=12)` — настраивает LPCOMP на UP-событие (порог ~3.9 В)
+- Параллельно включается VBUS-пробуждение (`sd_power_usbdetected_enable` / `POWER_INTENSET_USBDETECTED`)
+- В SYSTEMOFF: устройство просыпается от любого из двух событий:
+  - V_bat поднялась выше ~3.9 В (LPCOMP UP) — например при зарядке от солнечной панели через USB
+  - VBUS появился (USB подключён) — встроенный зарядник платы
+
+### Причины выключения (GPREGRET2)
+
+| Код | Константа | Описание |
+|-----|-----------|----------|
+| 0x00 | `SHUTDOWN_REASON_NONE` | Обычная загрузка |
+| 0x4C | `SHUTDOWN_REASON_LOW_VOLTAGE` | Runtime разряд ниже ~3.0 В |
+| 0x55 | `SHUTDOWN_REASON_USER` | Ручной `powerOff()` |
+| 0x42 | `SHUTDOWN_REASON_BOOT_PROTECT` | Boot protection при старте |
 
 ## Поведение платы
 
-- `promicro`: отключает `SX126X_POWER_EN` перед защитным выключением.
-- `promicro_eink_spi_v2`: отключает `PIN_GPS_EN` перед защитным выключением.
+### `promicro` (Nice!nano / ProMicro nRF52840)
 
-Поведение ручного `powerOff()` не изменено на обеих платах — выключение по запросу пользователя
-по-прежнему выполняет чистый `SYSTEMOFF` без вооружения LPCOMP.
+- `initiateShutdown()`: отключает `SX126X_POWER_EN` перед переходом в SYSTEMOFF
+- Порядок в `begin()`: init → `checkBootVoltage()` → `configureLowVoltageAlert()` → `SX126X_POWER_EN = HIGH`
+
+### `promicro_eink_spi_v2` (ProMicro + ePaper)
+
+- `initiateShutdown()`: отключает `PIN_GPS_EN` перед переходом в SYSTEMOFF
+- Порядок в `begin()`: init → `checkBootVoltage()` → `configureLowVoltageAlert()` → `PIN_GPS_EN = HIGH`
+
+Ручной `powerOff()` на обеих платах не изменён — выполняет чистый `sd_power_system_off()` без вооружения LPCOMP (пробуждение только по кнопке reset или VBUS).
+
+## CLI
+
+| Команда | Результат |
+|---------|-----------|
+| `get pwrmgt.support` | `supported` |
+| `get pwrmgt.source` | `battery` / `external` |
+| `get pwrmgt.bootreason` | строки причины reset и shutdown |
+| `get pwrmgt.bootmv` | напряжение батареи при старте (мВ) |
+
+## Изменённые файлы
+
+| Файл | Изменение |
+|------|-----------|
+| `src/helpers/NRF52Board.h` | `lpcomp_low_refsel` в `PowerMgtConfig`; `configureLowVoltageAlert()`, `s_power_instance`, `lpcompDownHandler()` |
+| `src/helpers/NRF52Board.cpp` | Реализация `configureLowVoltageAlert()`; ISR `LPCOMP_COMP_IRQHandler`; статические определения |
+| `variants/promicro/variant.h` | `PWRMGT_LPCOMP_REFSEL=12`, `PWRMGT_LPCOMP_LOW_REFSEL=11`; исправлен баг (было 11, давало ~2.7 В — ниже boot lock) |
+| `variants/promicro/PromicroBoard.cpp` | `power_config` + вызов `configureLowVoltageAlert()` |
+| `variants/promicro_eink_spi_v2/variant.h` | То же что promicro/variant.h |
+| `variants/promicro_eink_spi_v2/PromicroEinkV2Board.cpp` | То же что PromicroBoard.cpp |

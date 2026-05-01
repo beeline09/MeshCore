@@ -6,8 +6,9 @@
 #ifdef NRF52_POWER_MANAGEMENT
 const PowerMgtConfig power_config = {
   .lpcomp_ain_channel = PWRMGT_LPCOMP_AIN,
-  .lpcomp_refsel = PWRMGT_LPCOMP_REFSEL,
-  .voltage_bootlock = PWRMGT_VOLTAGE_BOOTLOCK
+  .lpcomp_refsel      = PWRMGT_LPCOMP_REFSEL,
+  .voltage_bootlock   = PWRMGT_VOLTAGE_BOOTLOCK,
+  .lpcomp_low_refsel  = PWRMGT_LPCOMP_LOW_REFSEL,
 };
 
 void PromicroBoard::initiateShutdown(uint8_t reason) {
@@ -43,6 +44,9 @@ void PromicroBoard::begin() {
     // Battery sense is on D17 -> P0.31 -> AIN7. We hold boot until the cell
     // is above the Li-ion protection threshold to avoid unstable startup.
     checkBootVoltage(&power_config);
+    if (power_config.lpcomp_low_refsel) {
+      configureLowVoltageAlert(power_config.lpcomp_ain_channel, power_config.lpcomp_low_refsel);
+    }
 #endif
     digitalWrite(SX126X_POWER_EN, HIGH);
     delay(10);   // give sx1262 some time to power up

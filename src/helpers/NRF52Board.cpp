@@ -29,6 +29,21 @@ void NRF52Board::begin() {
 uint32_t g_nrf52_reset_reason = 0;     // Reset/Startup reason
 uint8_t g_nrf52_shutdown_reason = 0;   // Shutdown reason
 
+NRF52Board* NRF52Board::s_power_instance = nullptr;
+
+void NRF52Board::lpcompDownHandler() {
+  if (s_power_instance && !s_power_instance->isExternalPowered()) {
+    s_power_instance->initiateShutdown(SHUTDOWN_REASON_LOW_VOLTAGE);
+  }
+}
+
+extern "C" void LPCOMP_COMP_IRQHandler(void) {
+  if (NRF_LPCOMP->EVENTS_DOWN) {
+    NRF_LPCOMP->EVENTS_DOWN = 0;
+    NRF52Board::lpcompDownHandler();
+  }
+}
+
 // Early constructor - runs before SystemInit() clears the registers
 // Priority 101 ensures this runs before SystemInit (102) and before
 // any C++ static constructors (default 65535)
@@ -235,6 +250,39 @@ void NRF52Board::configureVoltageWake(uint8_t ain_channel, uint8_t refsel) {
   }
 
   MESH_DEBUG_PRINTLN("PWRMGT: VBUS wake configured");
+}
+
+void NRF52Board::configureLowVoltageAlert(uint8_t ain_channel, uint8_t low_refsel) {
+  s_power_instance = this;
+
+  NRF_LPCOMP->TASKS_STOP = 1;
+  NRF_LPCOMP->ENABLE = LPCOMP_ENABLE_ENABLE_Disabled;
+
+  NRF_LPCOMP->PSEL      = ((uint32_t)ain_channel << LPCOMP_PSEL_PSEL_Pos) & LPCOMP_PSEL_PSEL_Msk;
+  NRF_LPCOMP->REFSEL    = ((uint32_t)low_refsel  << LPCOMP_REFSEL_REFSEL_Pos) & LPCOMP_REFSEL_REFSEL_Msk;
+  NRF_LPCOMP->ANADETECT = LPCOMP_ANADETECT_ANADETECT_Down;
+  NRF_LPCOMP->HYST      = LPCOMP_HYST_HYST_Hyst50mV;
+
+  NRF_LPCOMP->EVENTS_READY = 0;
+  NRF_LPCOMP->EVENTS_DOWN  = 0;
+  NRF_LPCOMP->EVENTS_UP    = 0;
+  NRF_LPCOMP->EVENTS_CROSS = 0;
+
+  NRF_LPCOMP->INTENCLR = 0xFFFFFFFF;
+  NRF_LPCOMP->INTENSET = LPCOMP_INTENSET_DOWN_Msk;
+
+  NVIC_SetPriority(LPCOMP_COMP_IRQn, 6);
+  NVIC_ClearPendingIRQ(LPCOMP_COMP_IRQn);
+  NVIC_EnableIRQ(LPCOMP_COMP_IRQn);
+
+  NRF_LPCOMP->ENABLE      = LPCOMP_ENABLE_ENABLE_Enabled;
+  NRF_LPCOMP->TASKS_START = 1;
+
+  for (uint8_t i = 0; i < 20 && !NRF_LPCOMP->EVENTS_READY; i++) {
+    delayMicroseconds(50);
+  }
+
+  MESH_DEBUG_PRINTLN("PWRMGT: Low-voltage alert armed (AIN%d, REFSEL=%d)", ain_channel, low_refsel);
 }
 #endif
 
