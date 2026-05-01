@@ -71,7 +71,7 @@ protection по АЦП всегда даёт абсолютное измерен
                                       │                       │
                              [SYSTEMOFF]              LPCOMP DOWN → ISR
                                       │                       │
-                             ┌────────┴────────┐     USB подключён?
+                             ┌────────┴────────┐     USB И V_bat ≥ 3000 мВ?
                              │                 │             │
                          V_bat ↑ ~3.9 В    VBUS          Да │ Нет
                          LPCOMP UP         подключён        │    │
@@ -100,8 +100,9 @@ protection по АЦП всегда даёт абсолютное измерен
 - `configureLowVoltageAlert(AIN=7, REFSEL=11)` вызывается в `begin()` после `checkBootVoltage()`
 - LPCOMP настроен на DOWN-событие (нисходящее пересечение порога)
 - ISR `LPCOMP_COMP_IRQHandler`: проверяет `EVENTS_DOWN`, вызывает `lpcompDownHandler()`
-- `lpcompDownHandler()`: если `!isExternalPowered()` → `initiateShutdown(LOW_VOLTAGE)`
-- При USB подключённом: ISR срабатывает но shutdown **не происходит** — устройство продолжает работу пока заряжается встроенным зарядником платы
+- `lpcompDownHandler()`: shutdown, если `!isExternalPowered()` **или** `getBattMilliVolts() < 3000`
+- При USB подключённом и V_bat ≥ 3000 мВ: shutdown **не происходит** — устройство работает на зарядке
+- При USB подключённом но V_bat < 3000 мВ: shutdown **происходит** — зарядный ток недостаточен для поддержания нагрузки, shutdown предотвращает brownout-цикл
 
 ### Voltage-recovery wake (LPCOMP UP + VBUS)
 
