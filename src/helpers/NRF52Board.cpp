@@ -32,7 +32,12 @@ uint8_t g_nrf52_shutdown_reason = 0;   // Shutdown reason
 NRF52Board* NRF52Board::s_power_instance = nullptr;
 
 void NRF52Board::lpcompDownHandler() {
-  if (s_power_instance && !s_power_instance->isExternalPowered()) {
+  if (!s_power_instance) return;
+  // Shutdown if on battery, OR if USB present but battery critically low
+  // (prevents brownout loop when solar current is insufficient for the load)
+  bool ext = s_power_instance->isExternalPowered();
+  uint16_t mv = s_power_instance->getBattMilliVolts();
+  if (!ext || mv < 3000) {
     s_power_instance->initiateShutdown(SHUTDOWN_REASON_LOW_VOLTAGE);
   }
 }
