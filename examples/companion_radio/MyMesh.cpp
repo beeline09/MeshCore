@@ -1111,8 +1111,14 @@ void MyMesh::begin(bool has_display) {
       if (getChannel(i, ch) && ch.name[0] && strcmp(ch.name, "TerminalCLI") == 0)
         found = true;
     }
-    if (!found && addChannel("TerminalCLI", TERMINAL_CLI_PSK))
+    if (found) {
+      MESH_DEBUG_PRINTLN("CLI: TerminalCLI channel already present");
+    } else if (addChannel("TerminalCLI", TERMINAL_CLI_PSK)) {
+      MESH_DEBUG_PRINTLN("CLI: TerminalCLI channel registered");
       saveChannels();
+    } else {
+      MESH_DEBUG_PRINTLN("CLI: ERROR — addChannel(TerminalCLI) failed (slots full or bad PSK)");
+    }
   }
 #endif
 }
@@ -2450,6 +2456,10 @@ void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf) {
 }
 
 void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const char* cmd) {
+  char from_hex[9];
+  mesh::Utils::toHex(from_hex, from.pub_key, 4);
+  MESH_DEBUG_PRINTLN("CLI/PM from=%s cmd='%s'", from_hex, cmd);
+
   if (strcmp(cmd, "reboot") == 0) {
     sendCliReplyPM(from, "rebooting in 1s...");
     _pending_reboot_at = futureMillis(1000);
@@ -2463,10 +2473,13 @@ void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const 
   char buf[512];
   buf[0] = '\0';
   _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
+  MESH_DEBUG_PRINTLN("CLI/PM reply(%zu): '%s'", strlen(buf), buf);
   if (buf[0]) sendCliReplyPM(from, buf);
 }
 
 void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* cmd) {
+  MESH_DEBUG_PRINTLN("CLI/Terminal ch=%u cmd='%s'", ch_idx, cmd);
+
   char buf[512];
   buf[0] = '\0';
   if (strcmp(cmd, "reboot") == 0) {
@@ -2478,6 +2491,7 @@ void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* c
   } else {
     _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
   }
+  MESH_DEBUG_PRINTLN("CLI/Terminal reply(%zu): '%s'", strlen(buf), buf);
   if (buf[0]) sendCliReplyChannel(ch_idx, buf);
   writeOKFrame();
 }
