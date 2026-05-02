@@ -541,6 +541,23 @@ void MyMesh::tryTimeSyncFromBuf() {
   }
 }
 
+void MyMesh::feedMsgTimestamp(uint32_t timestamp) {
+  if (timestamp <= MIN_VALID_TS || timestamp >= MAX_VALID_TS) return;
+  if (hasRecentAppTimeSet()) return;
+
+  // After first sync: reject timestamps that differ by more than MAX_JUMP — likely stale queued messages
+  if (_ts_sync_count > 0) {
+    uint32_t current = getRTCClock()->getCurrentTime();
+    uint32_t diff = (timestamp > current) ? timestamp - current : current - timestamp;
+    if (diff >= MAX_JUMP) return;
+  }
+
+  _ts_buf[_ts_buf_pos] = { timestamp, 0 };
+  _ts_buf_pos = (_ts_buf_pos + 1) % 10;
+  if (_ts_buf_count < 10) _ts_buf_count++;
+  tryTimeSyncFromBuf();
+}
+
 void MyMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp,
                           const uint8_t* app_data, size_t app_data_len) {
   BaseChatMesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len);
@@ -598,6 +615,7 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
 
 void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const char *text) {
+  feedMsgTimestamp(sender_timestamp);
   markConnectionActive(from); // in case this is from a server, and we have a connection
   queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, text);
 }
@@ -610,6 +628,7 @@ void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint3
 
 void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                                  const uint8_t *sender_prefix, const char *text) {
+  feedMsgTimestamp(sender_timestamp);
   markConnectionActive(from);
   // from.sync_since change needs to be persisted
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
@@ -618,6 +637,7 @@ void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uin
 
 void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
                                   const char *text) {
+  feedMsgTimestamp(timestamp);
   int i = 0;
   if (app_target_ver >= 3) {
     out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV_V3;

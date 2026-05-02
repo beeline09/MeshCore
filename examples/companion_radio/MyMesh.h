@@ -260,6 +260,7 @@ private:
   TimeSource _time_source = TIME_SOURCE_UNSET;
   uint32_t _app_time_lock_until = 0;
   void tryTimeSyncFromBuf();
+  void feedMsgTimestamp(uint32_t timestamp);
   void noteTimeSource(TimeSource source);
 
   struct Frame {

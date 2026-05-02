@@ -892,6 +892,7 @@ void CommonCLI::handleGetCmd(uint32_t sender_timestamp, char* command, char* rep
 }
 
 void CommonCLI::handleRegionCmd(char* command, char* reply) {
+  if (!_region_map) { strcpy(reply, "Regions not supported on this device"); return; }
   reply[0] = 0;
 
   const char* parts[4];
