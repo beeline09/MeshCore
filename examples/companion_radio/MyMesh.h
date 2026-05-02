@@ -77,7 +77,7 @@
 #ifdef WITH_COMPANION_CLI
 #include <helpers/CommonCLI.h>
 #include "CompanionCLICallbacks.h"
-#define TERMINAL_CLI_PSK  "VGVybWluYWxDTEkxNjA="
+#define TERMINAL_CLI_PSK  "VGVybWluYWxDTEkxMjM0NQ=="  // "TerminalCLI12345" — exactly 16 bytes
 #endif
 
 /* -------------------------------------------------------------------------------------- */
