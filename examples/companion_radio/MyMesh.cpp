@@ -1100,8 +1100,7 @@ void MyMesh::begin(bool has_display) {
 #ifdef WITH_COMPANION_CLI
   _cli_cb = new CompanionCLICallbacks(*this, *_store);
   _cli    = new CommonCLI(board, *getRTCClock(), sensors, &_prefs, _cli_cb);
-  mesh::Utils::toHex(_cli_pin, self_id.prv_key, 4);
-  _cli_pin[8] = '\0';
+  mesh::Utils::toHex(_cli_pin, self_id.pub_key + 4, 4);  // bytes [4..7], not the broadcast prefix
   Serial.printf("CLI PIN: %s\n", _cli_pin);
 
   // auto-register TerminalCLI channel if not present
