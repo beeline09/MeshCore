@@ -1281,6 +1281,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       bool success = getChannel(channel_idx, channel);
 #ifdef WITH_COMPANION_CLI
       if (success && strcmp(channel.name, "TerminalCLI") == 0) {
+        const_cast<char*>(text)[len - i] = '\0'; // text is not null-terminated in this frame type
         handleTerminalCLI(channel_idx, msg_timestamp, text);
       } else
 #endif
@@ -2422,12 +2423,11 @@ void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf) {
   uint32_t now = getRTCClock()->getCurrentTimeUnique();
 
   for (int i = 0; i < n; i++) {
-    char text[160];
+    char text[200];
     if (n > 1)
-      snprintf(text, sizeof(text), "[%d/%d] %s", i + 1, n, chunks[i]);
+      snprintf(text, sizeof(text), "%s: [%d/%d] %s", _prefs.node_name, i + 1, n, chunks[i]);
     else
-      strncpy(text, chunks[i], sizeof(text) - 1);
-    text[sizeof(text) - 1] = '\0';
+      snprintf(text, sizeof(text), "%s: %s", _prefs.node_name, chunks[i]);
 
     int fi = 0;
     if (app_target_ver >= 3) {
@@ -2439,7 +2439,7 @@ void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf) {
       out_frame[fi++] = RESP_CODE_CHANNEL_MSG_RECV;
     }
     out_frame[fi++] = ch_idx;
-    out_frame[fi++] = 0xFF; // synthetic, no LoRa path
+    out_frame[fi++] = 0; // synthetic local reply, 0 LoRa hops
     out_frame[fi++] = TXT_TYPE_PLAIN;
     memcpy(&out_frame[fi], &now, 4); fi += 4;
     int tlen = strlen(text);
@@ -2455,24 +2455,50 @@ void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf) {
   }
 }
 
+static void buildTimesyncReply(char* buf, uint32_t now, uint32_t ts_sync_count,
+    uint32_t ts_advert_count, uint32_t ts_valid_count, int ts_buf_count, int ts_best_cluster,
+    uint32_t ts_last_sync, int32_t ts_last_adj, bool time_reliable) {
+  DateTime dt(now);
+  if (ts_sync_count == 0) {
+    bool unset_mode = !time_reliable;
+    sprintf(buf, "TimeSync: no sync yet\nAdverts: %lu rx / %lu valid\nBuf: %d/10 (best cluster: %d/%d need %d)\nClock: %02d:%02d:%02d %d-%02d-%02d UTC",
+      (unsigned long)ts_advert_count, (unsigned long)ts_valid_count,
+      ts_buf_count, ts_best_cluster, min(ts_buf_count, unset_mode ? 5 : 10), unset_mode ? 3 : 7,
+      dt.hour(), dt.minute(), dt.second(), dt.year(), dt.month(), dt.day());
+  } else {
+    uint32_t ago = now > ts_last_sync ? now - ts_last_sync : 0;
+    DateTime ls(ts_last_sync);
+    sprintf(buf, "TimeSync: %lu syncs\nLast: %02d:%02d %d-%02d-%02d UTC (%lus ago)\nAdj: %+lds\nAdverts: %lu rx / %lu valid\nBuf: %d/10\nClock: %02d:%02d:%02d %d-%02d-%02d UTC",
+      (unsigned long)ts_sync_count,
+      ls.hour(), ls.minute(), ls.year(), ls.month(), ls.day(),
+      (unsigned long)ago, (long)ts_last_adj,
+      (unsigned long)ts_advert_count, (unsigned long)ts_valid_count,
+      ts_buf_count, dt.hour(), dt.minute(), dt.second(), dt.year(), dt.month(), dt.day());
+  }
+}
+
 void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const char* cmd) {
   char from_hex[9];
   mesh::Utils::toHex(from_hex, from.id.pub_key, 4);
   MESH_DEBUG_PRINTLN("CLI/PM from=%s cmd='%s'", from_hex, cmd);
 
+  char buf[512];
+  buf[0] = '\0';
   if (strcmp(cmd, "reboot") == 0) {
     sendCliReplyPM(from, "rebooting in 1s...");
     _pending_reboot_at = futureMillis(1000);
     return;
-  }
-  if (strcmp(cmd, "poweroff") == 0 || strcmp(cmd, "shutdown") == 0) {
+  } else if (strcmp(cmd, "poweroff") == 0 || strcmp(cmd, "shutdown") == 0) {
     sendCliReplyPM(from, "powering off...");
     _pending_poweroff_at = futureMillis(500);
     return;
+  } else if (memcmp(cmd, "timesync", 8) == 0) {
+    buildTimesyncReply(buf, getRTCClock()->getCurrentTime(), _ts_sync_count,
+      _ts_advert_count, _ts_valid_count, _ts_buf_count, _ts_best_cluster,
+      _ts_last_sync, _ts_last_adj, getRTCClock()->isTimeReliable());
+  } else {
+    _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
   }
-  char buf[512];
-  buf[0] = '\0';
-  _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
   MESH_DEBUG_PRINTLN("CLI/PM reply(%zu): '%s'", strlen(buf), buf);
   if (buf[0]) sendCliReplyPM(from, buf);
 }
@@ -2488,12 +2514,16 @@ void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* c
   } else if (strcmp(cmd, "poweroff") == 0 || strcmp(cmd, "shutdown") == 0) {
     strcpy(buf, "powering off...");
     _pending_poweroff_at = futureMillis(500);
+  } else if (memcmp(cmd, "timesync", 8) == 0) {
+    buildTimesyncReply(buf, getRTCClock()->getCurrentTime(), _ts_sync_count,
+      _ts_advert_count, _ts_valid_count, _ts_buf_count, _ts_best_cluster,
+      _ts_last_sync, _ts_last_adj, getRTCClock()->isTimeReliable());
   } else {
     _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
   }
   MESH_DEBUG_PRINTLN("CLI/Terminal reply(%zu): '%s'", strlen(buf), buf);
+  writeOKFrame(); // send OK before push so app completes the command exchange first
   if (buf[0]) sendCliReplyChannel(ch_idx, buf);
-  writeOKFrame();
 }
 
 #endif  // WITH_COMPANION_CLI
