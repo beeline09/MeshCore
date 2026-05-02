@@ -2457,7 +2457,7 @@ void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf) {
 
 void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const char* cmd) {
   char from_hex[9];
-  mesh::Utils::toHex(from_hex, from.pub_key, 4);
+  mesh::Utils::toHex(from_hex, from.id.pub_key, 4);
   MESH_DEBUG_PRINTLN("CLI/PM from=%s cmd='%s'", from_hex, cmd);
 
   if (strcmp(cmd, "reboot") == 0) {
