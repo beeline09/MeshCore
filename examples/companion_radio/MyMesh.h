@@ -74,6 +74,12 @@
 #include <helpers/BaseChatMesh.h>
 #include <helpers/TransportKeyStore.h>
 
+#ifdef WITH_COMPANION_CLI
+#include <helpers/CommonCLI.h>
+#include "CompanionCLICallbacks.h"
+#define TERMINAL_CLI_PSK  "VGVybWluYWxDTEkxNjA="
+#endif
+
 /* -------------------------------------------------------------------------------------- */
 
 #define REQ_TYPE_GET_STATUS             0x01 // same as _GET_STATS
@@ -283,6 +289,19 @@ private:
 
   #define ADVERT_PATH_TABLE_SIZE   16
   AdvertPath advert_paths[ADVERT_PATH_TABLE_SIZE]; // circular table
+
+#ifdef WITH_COMPANION_CLI
+  CommonCLI*             _cli = nullptr;
+  CompanionCLICallbacks* _cli_cb = nullptr;
+  char                   _cli_pin[9];
+  unsigned long          _pending_reboot_at = 0;
+  unsigned long          _pending_poweroff_at = 0;
+
+  void handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const char* cmd);
+  void handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* cmd);
+  void sendCliReplyPM(const ContactInfo& to, const char* buf);
+  void sendCliReplyChannel(uint8_t ch_idx, const char* buf);
+#endif
 };
 
 extern MyMesh the_mesh;

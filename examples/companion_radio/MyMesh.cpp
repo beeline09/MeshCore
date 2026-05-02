@@ -616,6 +616,12 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
 void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const char *text) {
   feedMsgTimestamp(sender_timestamp);
+#ifdef WITH_COMPANION_CLI
+  if (_cli && strncasecmp(text, _cli_pin, 8) == 0 && text[8] == ' ') {
+    handleRemoteCLI(from, sender_timestamp, text + 9);
+    return;
+  }
+#endif
   markConnectionActive(from); // in case this is from a server, and we have a connection
   queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, text);
 }
@@ -1090,6 +1096,26 @@ void MyMesh::begin(bool has_display) {
   radio_driver.setRxBoostedGainMode(_prefs.rx_boosted_gain);
   MESH_DEBUG_PRINTLN("RX Boosted Gain Mode: %s",
                      radio_driver.getRxBoostedGainMode() ? "Enabled" : "Disabled");
+
+#ifdef WITH_COMPANION_CLI
+  _cli_cb = new CompanionCLICallbacks(*this, *_store);
+  _cli    = new CommonCLI(board, *getRTCClock(), sensors, &_prefs, _cli_cb);
+  mesh::Utils::toHex(_cli_pin, self_id.prv_key, 4);
+  _cli_pin[8] = '\0';
+  Serial.printf("CLI PIN: %s\n", _cli_pin);
+
+  // auto-register TerminalCLI channel if not present
+  {
+    bool found = false;
+    ChannelDetails ch;
+    for (int i = 0; i < MAX_GROUP_CHANNELS && !found; i++) {
+      if (getChannel(i, ch) && ch.name[0] && strcmp(ch.name, "TerminalCLI") == 0)
+        found = true;
+    }
+    if (!found && addChannel("TerminalCLI", TERMINAL_CLI_PSK))
+      saveChannels();
+  }
+#endif
 }
 
 const char *MyMesh::getNodeName() {
@@ -1248,6 +1274,11 @@ void MyMesh::handleCmdFrame(size_t len) {
     } else {
       ChannelDetails channel;
       bool success = getChannel(channel_idx, channel);
+#ifdef WITH_COMPANION_CLI
+      if (success && strcmp(channel.name, "TerminalCLI") == 0) {
+        handleTerminalCLI(channel_idx, msg_timestamp, text);
+      } else
+#endif
       if (success && sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, text, len - i)) {
         writeOKFrame();
       } else {
@@ -2296,6 +2327,17 @@ void MyMesh::checkSerialInterface() {
 void MyMesh::loop() {
   BaseChatMesh::loop();
 
+#ifdef WITH_COMPANION_CLI
+  if (_pending_reboot_at && millisHasNowPassed(_pending_reboot_at)) {
+    _pending_reboot_at = 0;
+    board.reboot();
+  }
+  if (_pending_poweroff_at && millisHasNowPassed(_pending_poweroff_at)) {
+    _pending_poweroff_at = 0;
+    board.powerOff();
+  }
+#endif
+
   if (_cli_rescue) {
     checkCLIRescueCmd();
   } else {
@@ -2327,3 +2369,118 @@ bool MyMesh::advert() {
     return false;
   }
 }
+
+#ifdef WITH_COMPANION_CLI
+
+// Split buf into chunks of <=150 chars, trying to break on newlines.
+// Returns number of chunks written into out[].
+static int splitCliReply(const char* buf, char out[][152], int max_chunks) {
+  int n = 0;
+  const char* p = buf;
+  while (*p && n < max_chunks) {
+    int remaining = strlen(p);
+    if (remaining <= 150) {
+      strcpy(out[n++], p);
+      break;
+    }
+    // Find last newline within 150 chars
+    int cut = 150;
+    for (int i = 149; i > 0; i--) {
+      if (p[i] == '\n') { cut = i + 1; break; }
+    }
+    memcpy(out[n], p, cut);
+    out[n][cut] = '\0';
+    n++;
+    p += cut;
+  }
+  return n;
+}
+
+void MyMesh::sendCliReplyPM(const ContactInfo& to, const char* buf) {
+  char chunks[8][152];
+  int n = splitCliReply(buf, chunks, 8);
+  uint32_t ack_dummy, timeout_dummy;
+  for (int i = 0; i < n; i++) {
+    char text[160];
+    if (n > 1)
+      snprintf(text, sizeof(text), "[%d/%d] %s", i + 1, n, chunks[i]);
+    else
+      strncpy(text, chunks[i], sizeof(text) - 1);
+    text[sizeof(text) - 1] = '\0';
+    sendMessage(to, getRTCClock()->getCurrentTimeUnique(), 0, text, ack_dummy, timeout_dummy);
+  }
+}
+
+void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf) {
+  char chunks[8][152];
+  int n = splitCliReply(buf, chunks, 8);
+  uint32_t now = getRTCClock()->getCurrentTimeUnique();
+
+  for (int i = 0; i < n; i++) {
+    char text[160];
+    if (n > 1)
+      snprintf(text, sizeof(text), "[%d/%d] %s", i + 1, n, chunks[i]);
+    else
+      strncpy(text, chunks[i], sizeof(text) - 1);
+    text[sizeof(text) - 1] = '\0';
+
+    int fi = 0;
+    if (app_target_ver >= 3) {
+      out_frame[fi++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
+      out_frame[fi++] = 0;  // SNR (synthetic)
+      out_frame[fi++] = 0;  // reserved
+      out_frame[fi++] = 0;  // reserved
+    } else {
+      out_frame[fi++] = RESP_CODE_CHANNEL_MSG_RECV;
+    }
+    out_frame[fi++] = ch_idx;
+    out_frame[fi++] = 0xFF; // synthetic, no LoRa path
+    out_frame[fi++] = TXT_TYPE_PLAIN;
+    memcpy(&out_frame[fi], &now, 4); fi += 4;
+    int tlen = strlen(text);
+    if (fi + tlen > MAX_FRAME_SIZE) tlen = MAX_FRAME_SIZE - fi;
+    memcpy(&out_frame[fi], text, tlen); fi += tlen;
+    addToOfflineQueue(out_frame, fi);
+    now++;  // unique timestamp per chunk
+  }
+
+  if (_serial->isConnected()) {
+    uint8_t frame[1] = { PUSH_CODE_MSG_WAITING };
+    _serial->writeFrame(frame, 1);
+  }
+}
+
+void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const char* cmd) {
+  if (strcmp(cmd, "reboot") == 0) {
+    sendCliReplyPM(from, "rebooting in 1s...");
+    _pending_reboot_at = futureMillis(1000);
+    return;
+  }
+  if (strcmp(cmd, "poweroff") == 0 || strcmp(cmd, "shutdown") == 0) {
+    sendCliReplyPM(from, "powering off...");
+    _pending_poweroff_at = futureMillis(500);
+    return;
+  }
+  char buf[512];
+  buf[0] = '\0';
+  _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
+  if (buf[0]) sendCliReplyPM(from, buf);
+}
+
+void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* cmd) {
+  char buf[512];
+  buf[0] = '\0';
+  if (strcmp(cmd, "reboot") == 0) {
+    strcpy(buf, "rebooting in 1s...");
+    _pending_reboot_at = futureMillis(1000);
+  } else if (strcmp(cmd, "poweroff") == 0 || strcmp(cmd, "shutdown") == 0) {
+    strcpy(buf, "powering off...");
+    _pending_poweroff_at = futureMillis(500);
+  } else {
+    _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
+  }
+  if (buf[0]) sendCliReplyChannel(ch_idx, buf);
+  writeOKFrame();
+}
+
+#endif  // WITH_COMPANION_CLI
