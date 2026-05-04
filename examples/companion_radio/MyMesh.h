@@ -36,6 +36,7 @@
 #include <helpers/IdentityStore.h>
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/StaticPoolPacketManager.h>
+#include <helpers/TimeSyncHelper.h>
 #include <target.h>
 
 /* ---------------------------------- CONFIGURATION ------------------------------------- */
@@ -96,6 +97,8 @@ struct AdvertPath {
 
 class MyMesh : public BaseChatMesh, public DataStoreHost {
 public:
+  TimeSyncHelper _ts;
+
   enum TimeSource : uint8_t {
     TIME_SOURCE_UNSET = 0,
     TIME_SOURCE_CONTACTS,
@@ -121,9 +124,9 @@ public:
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);
   TimeSource getTimeSource() const { return _time_source; }
-  uint32_t getTimeSyncCount() const { return _ts_sync_count; }
-  uint32_t getTimeLastSync() const { return _ts_last_sync; }
-  int32_t getTimeLastAdjustment() const { return _ts_last_adj; }
+  uint32_t getTimeSyncCount() const { return _ts._sync_count; }
+  uint32_t getTimeLastSync() const { return _ts._last_sync; }
+  int32_t getTimeLastAdjustment() const { return _ts._last_adj; }
   bool hasRecentAppTimeSet() const;
   const char *getTimeSourceLabel() const;
 
@@ -253,20 +256,8 @@ private:
   uint8_t cmd_frame[MAX_FRAME_SIZE + 1];
   uint8_t out_frame[MAX_FRAME_SIZE + 1];
   CayenneLPP telemetry;
-  struct TsSample { uint32_t ts; uint32_t pub_hash; };
-  TsSample _ts_buf[10];
-  int      _ts_buf_pos = 0;
-  int      _ts_buf_count = 0;
-  uint32_t _ts_sync_count = 0;
-  uint32_t _ts_advert_count = 0;
-  uint32_t _ts_valid_count = 0;
-  uint32_t _ts_last_sync = 0;
-  int32_t  _ts_last_adj = 0;
-  int      _ts_best_cluster = 0;
   TimeSource _time_source = TIME_SOURCE_UNSET;
   uint32_t _app_time_lock_until = 0;
-  void tryTimeSyncFromBuf();
-  void feedMsgTimestamp(uint32_t timestamp);
   void noteTimeSource(TimeSource source);
 
   struct Frame {
@@ -296,11 +287,16 @@ private:
   char                   _cli_pin[9];
   unsigned long          _pending_reboot_at = 0;
   unsigned long          _pending_poweroff_at = 0;
+  bool                   _remote_cli_enabled = true;
+  bool                   _terminal_cli_enabled = true;
+  bool                   _ts_from_adverts = true;
+  bool                   _ts_from_messages = true;
 
   void handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const char* cmd);
   void handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* cmd);
   void sendCliReplyPM(const ContactInfo& to, const char* buf);
   void sendCliReplyChannel(uint8_t ch_idx, const char* buf);
+  bool handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool is_remote);
 #endif
 };
 

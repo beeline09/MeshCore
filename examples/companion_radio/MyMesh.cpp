@@ -146,9 +146,6 @@
 
 static const uint32_t MIN_VALID_TS = 1577836800; // 2020-01-01 UTC
 static const uint32_t MAX_VALID_TS = 2524608000; // 2050-01-01 UTC
-static const uint32_t DRIFT_THRESHOLD = 120;
-static const uint32_t MAX_JUMP = 36000;
-static const uint32_t CLUSTER_WINDOW = 60;
 static const uint32_t APP_TIME_HOLDOFF_SECS = 6 * 60 * 60;
 
 void MyMesh::writeOKFrame() {
@@ -479,100 +476,20 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
 #endif
 }
 
-void MyMesh::tryTimeSyncFromBuf() {
-  uint32_t current = getRTCClock()->getCurrentTime();
-  bool unset = !getRTCClock()->isTimeReliable() && (_ts_sync_count == 0) && !hasRecentAppTimeSet();
-  int n = unset ? min(_ts_buf_count, 5) : min(_ts_buf_count, 10);
-  int quorum = unset ? 3 : 7;
-  if (_ts_buf_count < quorum) return;
-
-  uint32_t now = getRTCClock()->getCurrentTime();
-  if (hasRecentAppTimeSet() && now < _app_time_lock_until) return;
-
-  uint32_t tmp[10];
-  for (int i = 0; i < n; i++) {
-    int idx = (_ts_buf_pos - 1 - i + 10) % 10;
-    tmp[i] = _ts_buf[idx].ts;
-  }
-  for (int i = 1; i < n; i++) {
-    uint32_t key = tmp[i];
-    int j = i - 1;
-    while (j >= 0 && tmp[j] > key) { tmp[j + 1] = tmp[j]; j--; }
-    tmp[j + 1] = key;
-  }
-
-  int best_count = 0, best_start = 0;
-  for (int i = 0; i < n; i++) {
-    int cnt = 0;
-    for (int j = i; j < n && tmp[j] - tmp[i] <= CLUSTER_WINDOW; j++) cnt++;
-    if (cnt > best_count) { best_count = cnt; best_start = i; }
-  }
-  int count = best_count;
-  if (count > _ts_best_cluster) _ts_best_cluster = count;
-  if (count < quorum) return;
-
-  int cluster_end = best_start;
-  while (cluster_end < n && tmp[cluster_end] - tmp[best_start] <= CLUSTER_WINDOW) cluster_end++;
-  uint32_t median = tmp[(best_start + cluster_end) / 2];
-
-  auto applySync = [&](uint32_t ts, int32_t adj) {
-    LocationProvider* gps = sensors.getLocationProvider();
-    if (gps != nullptr && gps->isEnabled() && gps->isValid()) {
-      gps->syncTime();
-      noteTimeSource(TIME_SOURCE_GPS);
-      MESH_DEBUG_PRINTLN("TimeSync: GPS re-sync requested (quorum drift %ld sec)", (long)adj);
-    } else {
-      getRTCClock()->setCurrentTime(ts);
-      noteTimeSource(TIME_SOURCE_ADVERT);
-      MESH_DEBUG_PRINTLN("TimeSync: clock set, adj %ld sec (quorum %d/%d)", (long)adj, count, n);
-    }
-    _ts_last_adj = adj;
-    _ts_last_sync = ts;
-    _ts_sync_count++;
-  };
-
-  if (unset) {
-    applySync(median, (int32_t)median - (int32_t)current);
-  } else {
-    uint32_t diff = (median > current) ? median - current : current - median;
-    if (diff > DRIFT_THRESHOLD && diff < MAX_JUMP) {
-      applySync(median, (int32_t)median - (int32_t)current);
-    }
-  }
-}
-
-void MyMesh::feedMsgTimestamp(uint32_t timestamp) {
-  if (timestamp <= MIN_VALID_TS || timestamp >= MAX_VALID_TS) return;
-  if (hasRecentAppTimeSet()) return;
-
-  // After first sync: reject timestamps that differ by more than MAX_JUMP — likely stale queued messages
-  if (_ts_sync_count > 0) {
-    uint32_t current = getRTCClock()->getCurrentTime();
-    uint32_t diff = (timestamp > current) ? timestamp - current : current - timestamp;
-    if (diff >= MAX_JUMP) return;
-  }
-
-  _ts_buf[_ts_buf_pos] = { timestamp, 0 };
-  _ts_buf_pos = (_ts_buf_pos + 1) % 10;
-  if (_ts_buf_count < 10) _ts_buf_count++;
-  tryTimeSyncFromBuf();
-}
-
 void MyMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp,
                           const uint8_t* app_data, size_t app_data_len) {
   BaseChatMesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len);
 
-  _ts_advert_count++;
-  if (timestamp <= MIN_VALID_TS || timestamp >= MAX_VALID_TS) return;
-
-  _ts_valid_count++;
   uint32_t pub_hash;
   memcpy(&pub_hash, id.pub_key, 4);
-  _ts_buf[_ts_buf_pos] = { timestamp, pub_hash };
-  _ts_buf_pos = (_ts_buf_pos + 1) % 10;
-  if (_ts_buf_count < 10) _ts_buf_count++;
-
-  tryTimeSyncFromBuf();
+#ifdef WITH_COMPANION_CLI
+  if (_ts_from_adverts)
+#endif
+  if (_ts.feedAdvert(timestamp, pub_hash)) {
+    auto r = _ts.trySync(getRTCClock(), &sensors, hasRecentAppTimeSet());
+    if (r == TsSyncResult::GPS) noteTimeSource(TIME_SOURCE_GPS);
+    else if (r == TsSyncResult::CLOCK) noteTimeSource(TIME_SOURCE_ADVERT);
+  }
 }
 
 bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
@@ -615,9 +532,17 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
 
 void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const char *text) {
-  feedMsgTimestamp(sender_timestamp);
 #ifdef WITH_COMPANION_CLI
-  if (_cli && strncasecmp(text, _cli_pin, 8) == 0 && text[8] == ' ') {
+  if (_ts_from_messages)
+#endif
+  if (_ts.feedMessage(sender_timestamp, getRTCClock()->getCurrentTime()) && !hasRecentAppTimeSet()) {
+    auto r = _ts.trySync(getRTCClock(), &sensors, false);
+    if (r == TsSyncResult::GPS) noteTimeSource(TIME_SOURCE_GPS);
+    else if (r == TsSyncResult::CLOCK) noteTimeSource(TIME_SOURCE_ADVERT);
+  }
+#ifdef WITH_COMPANION_CLI
+  MESH_DEBUG_PRINTLN("PM recv: cli=%s pin='%.8s' text='%.20s'", _cli ? "set" : "NULL", _cli_pin, text);
+  if (_remote_cli_enabled && _cli_pin[0] && strncasecmp(text, _cli_pin, 8) == 0 && text[8] == ' ') {
     handleRemoteCLI(from, sender_timestamp, text + 9);
     return;
   }
@@ -634,7 +559,11 @@ void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint3
 
 void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                                  const uint8_t *sender_prefix, const char *text) {
-  feedMsgTimestamp(sender_timestamp);
+  if (_ts.feedMessage(sender_timestamp, getRTCClock()->getCurrentTime()) && !hasRecentAppTimeSet()) {
+    auto r = _ts.trySync(getRTCClock(), &sensors, false);
+    if (r == TsSyncResult::GPS) noteTimeSource(TIME_SOURCE_GPS);
+    else if (r == TsSyncResult::CLOCK) noteTimeSource(TIME_SOURCE_ADVERT);
+  }
   markConnectionActive(from);
   // from.sync_since change needs to be persisted
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
@@ -643,7 +572,11 @@ void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uin
 
 void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
                                   const char *text) {
-  feedMsgTimestamp(timestamp);
+  if (_ts.feedMessage(timestamp, getRTCClock()->getCurrentTime()) && !hasRecentAppTimeSet()) {
+    auto r = _ts.trySync(getRTCClock(), &sensors, false);
+    if (r == TsSyncResult::GPS) noteTimeSource(TIME_SOURCE_GPS);
+    else if (r == TsSyncResult::CLOCK) noteTimeSource(TIME_SOURCE_ADVERT);
+  }
   int i = 0;
   if (app_target_ver >= 3) {
     out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
@@ -1100,7 +1033,11 @@ void MyMesh::begin(bool has_display) {
 #ifdef WITH_COMPANION_CLI
   _cli_cb = new CompanionCLICallbacks(*this, *_store);
   _cli    = new CommonCLI(board, *getRTCClock(), sensors, &_prefs, _cli_cb);
-  mesh::Utils::toHex(_cli_pin, self_id.pub_key + 4, 4);  // bytes [4..7], not the broadcast prefix
+  { // PIN from last 4 bytes of private key — not derivable from public info
+    uint8_t prv[PRV_KEY_SIZE];
+    self_id.writeTo(prv, PRV_KEY_SIZE);
+    mesh::Utils::toHex(_cli_pin, prv + PRV_KEY_SIZE - 4, 4);
+  }
   Serial.printf("CLI PIN: %s\n", _cli_pin);
 
   // auto-register TerminalCLI channel if not present
@@ -1280,7 +1217,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       ChannelDetails channel;
       bool success = getChannel(channel_idx, channel);
 #ifdef WITH_COMPANION_CLI
-      if (success && strcmp(channel.name, "TerminalCLI") == 0) {
+      if (_terminal_cli_enabled && success && strcmp(channel.name, "TerminalCLI") == 0) {
         const_cast<char*>(text)[len - i] = '\0'; // text is not null-terminated in this frame type
         handleTerminalCLI(channel_idx, msg_timestamp, text);
       } else
@@ -2295,6 +2232,10 @@ void MyMesh::checkCLIRescueCmd() {
 
     } else if (strcmp(cli_command, "reboot") == 0) {
       board.reboot();  // doesn't return
+    } else if (memcmp(cli_command, "timesync", 8) == 0) {
+      char reply[320];
+      _ts.buildReply(reply, getRTCClock());
+      Serial.println(reply);
     } else {
       Serial.println("  Error: unknown command");
     }
@@ -2455,26 +2396,97 @@ void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf) {
   }
 }
 
-static void buildTimesyncReply(char* buf, uint32_t now, uint32_t ts_sync_count,
-    uint32_t ts_advert_count, uint32_t ts_valid_count, int ts_buf_count, int ts_best_cluster,
-    uint32_t ts_last_sync, int32_t ts_last_adj, bool time_reliable) {
-  DateTime dt(now);
-  if (ts_sync_count == 0) {
-    bool unset_mode = !time_reliable;
-    sprintf(buf, "TimeSync: no sync yet\nAdverts: %lu rx / %lu valid\nBuf: %d/10 (best cluster: %d/%d need %d)\nClock: %02d:%02d:%02d %d-%02d-%02d UTC",
-      (unsigned long)ts_advert_count, (unsigned long)ts_valid_count,
-      ts_buf_count, ts_best_cluster, min(ts_buf_count, unset_mode ? 5 : 10), unset_mode ? 3 : 7,
-      dt.hour(), dt.minute(), dt.second(), dt.year(), dt.month(), dt.day());
+bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool is_remote) {
+  if (strcmp(cmd, "pin") == 0) {
+    snprintf(buf, 512, "CLI PIN: %s", _cli_pin);
+
+  } else if (strcmp(cmd, "timesync") == 0) {
+    _ts.buildReply(buf, getRTCClock());
+    char flags[64];
+    snprintf(flags, sizeof(flags), "\nAdverts: %s  Msgs: %s",
+             _ts_from_adverts ? "on" : "off", _ts_from_messages ? "on" : "off");
+    strncat(buf, flags, 511 - strlen(buf));
+
+  } else if (strcmp(cmd, "timesync on") == 0) {
+    _ts_from_adverts = _ts_from_messages = true;
+    strcpy(buf, "timesync: on (adverts+msgs)");
+  } else if (strcmp(cmd, "timesync off") == 0) {
+    _ts_from_adverts = _ts_from_messages = false;
+    strcpy(buf, "timesync: off");
+  } else if (strcmp(cmd, "timesync adverts on") == 0) {
+    _ts_from_adverts = true;
+    strcpy(buf, "timesync adverts: on");
+  } else if (strcmp(cmd, "timesync adverts off") == 0) {
+    _ts_from_adverts = false;
+    strcpy(buf, "timesync adverts: off");
+  } else if (strcmp(cmd, "timesync msgs on") == 0) {
+    _ts_from_messages = true;
+    strcpy(buf, "timesync msgs: on");
+  } else if (strcmp(cmd, "timesync msgs off") == 0) {
+    _ts_from_messages = false;
+    strcpy(buf, "timesync msgs: off");
+  } else if (strcmp(cmd, "timesync reset") == 0) {
+    _ts.reset();
+    strcpy(buf, "timesync: state reset (params kept)");
+
+  } else if (strcmp(cmd, "timesync params") == 0) {
+    snprintf(buf, 512, "cluster: %lus (default %us)\ndrift:   %lus (default %us)\njump:    %lus (default %us)",
+             (unsigned long)_ts.cluster_window,  TS_CLUSTER_WINDOW,
+             (unsigned long)_ts.drift_threshold, TS_DRIFT_THRESHOLD,
+             (unsigned long)_ts.max_jump,         TS_MAX_JUMP);
+  } else if (strncmp(cmd, "set timesync.cluster ", 21) == 0) {
+    _ts.cluster_window = atoi(cmd + 21);
+    snprintf(buf, 512, "cluster_window: %lus", (unsigned long)_ts.cluster_window);
+  } else if (strncmp(cmd, "set timesync.drift ", 19) == 0) {
+    _ts.drift_threshold = atoi(cmd + 19);
+    snprintf(buf, 512, "drift_threshold: %lus", (unsigned long)_ts.drift_threshold);
+  } else if (strncmp(cmd, "set timesync.jump ", 18) == 0) {
+    _ts.max_jump = atoi(cmd + 18);
+    snprintf(buf, 512, "max_jump: %lus", (unsigned long)_ts.max_jump);
+
+  } else if (strcmp(cmd, "get remote.cli") == 0) {
+    snprintf(buf, 512, "remote.cli: %s", _remote_cli_enabled ? "on" : "off");
+  } else if (strcmp(cmd, "set remote.cli on") == 0) {
+    _remote_cli_enabled = true;
+    strcpy(buf, "remote.cli: on");
+  } else if (strcmp(cmd, "set remote.cli off") == 0) {
+    _remote_cli_enabled = false;
+    if (is_remote) strcpy(buf, "remote.cli: off (this was the last remote command)");
+    else           strcpy(buf, "remote.cli: off");
+
+  } else if (strcmp(cmd, "get terminal.cli") == 0) {
+    snprintf(buf, 512, "terminal.cli: %s", _terminal_cli_enabled ? "on" : "off");
+  } else if (strcmp(cmd, "set terminal.cli on") == 0) {
+    if (!_terminal_cli_enabled) {
+      if (addChannel("TerminalCLI", TERMINAL_CLI_PSK)) {
+        saveChannels();
+        _terminal_cli_enabled = true;
+        strcpy(buf, "terminal.cli: on (channel registered)");
+      } else {
+        strcpy(buf, "ERR: addChannel failed (slots full?)");
+      }
+    } else {
+      strcpy(buf, "terminal.cli: already on");
+    }
+  } else if (strcmp(cmd, "set terminal.cli off") == 0) {
+    bool found = false;
+    for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
+      ChannelDetails ch;
+      if (getChannel(i, ch) && ch.name[0] && strcmp(ch.name, "TerminalCLI") == 0) {
+        ChannelDetails empty{};
+        setChannel(i, empty);
+        found = true;
+        break;
+      }
+    }
+    if (found) saveChannels();
+    _terminal_cli_enabled = false;
+    strcpy(buf, found ? "terminal.cli: off (channel removed)" : "terminal.cli: off");
+
   } else {
-    uint32_t ago = now > ts_last_sync ? now - ts_last_sync : 0;
-    DateTime ls(ts_last_sync);
-    sprintf(buf, "TimeSync: %lu syncs\nLast: %02d:%02d %d-%02d-%02d UTC (%lus ago)\nAdj: %+lds\nAdverts: %lu rx / %lu valid\nBuf: %d/10\nClock: %02d:%02d:%02d %d-%02d-%02d UTC",
-      (unsigned long)ts_sync_count,
-      ls.hour(), ls.minute(), ls.year(), ls.month(), ls.day(),
-      (unsigned long)ago, (long)ts_last_adj,
-      (unsigned long)ts_advert_count, (unsigned long)ts_valid_count,
-      ts_buf_count, dt.hour(), dt.minute(), dt.second(), dt.year(), dt.month(), dt.day());
+    return false; // not a companion command — delegate to CommonCLI
   }
+  return true;
 }
 
 void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const char* cmd) {
@@ -2492,12 +2504,9 @@ void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const 
     sendCliReplyPM(from, "powering off...");
     _pending_poweroff_at = futureMillis(500);
     return;
-  } else if (memcmp(cmd, "timesync", 8) == 0) {
-    buildTimesyncReply(buf, getRTCClock()->getCurrentTime(), _ts_sync_count,
-      _ts_advert_count, _ts_valid_count, _ts_buf_count, _ts_best_cluster,
-      _ts_last_sync, _ts_last_adj, getRTCClock()->isTimeReliable());
-  } else {
-    _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
+  } else if (!handleCliCmd(sender_ts, cmd, buf, true)) {
+    if (_cli) _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
+    else      strcpy(buf, "ERR: CLI not initialized");
   }
   MESH_DEBUG_PRINTLN("CLI/PM reply(%zu): '%s'", strlen(buf), buf);
   if (buf[0]) sendCliReplyPM(from, buf);
@@ -2514,12 +2523,9 @@ void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* c
   } else if (strcmp(cmd, "poweroff") == 0 || strcmp(cmd, "shutdown") == 0) {
     strcpy(buf, "powering off...");
     _pending_poweroff_at = futureMillis(500);
-  } else if (memcmp(cmd, "timesync", 8) == 0) {
-    buildTimesyncReply(buf, getRTCClock()->getCurrentTime(), _ts_sync_count,
-      _ts_advert_count, _ts_valid_count, _ts_buf_count, _ts_best_cluster,
-      _ts_last_sync, _ts_last_adj, getRTCClock()->isTimeReliable());
-  } else {
-    _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
+  } else if (!handleCliCmd(sender_ts, cmd, buf, false)) {
+    if (_cli) _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
+    else      strcpy(buf, "ERR: CLI not initialized");
   }
   MESH_DEBUG_PRINTLN("CLI/Terminal reply(%zu): '%s'", strlen(buf), buf);
   writeOKFrame(); // send OK before push so app completes the command exchange first

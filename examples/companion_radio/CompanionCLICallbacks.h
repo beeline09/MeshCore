@@ -31,4 +31,5 @@ public:
   void clearStats() override;
   void applyTempRadioParams(float freq, float bw, uint8_t sf, uint8_t cr, int timeout_mins) override;
   void setRxBoostedGain(bool enable) override;
+  void formatTimesyncReply(char* reply) override;
 };

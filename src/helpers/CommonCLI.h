@@ -58,6 +58,10 @@ public:
   virtual void setRxBoostedGain(bool enable) {
     // no op by default
   };
+
+  virtual void formatTimesyncReply(char* reply) {
+    strcpy(reply, "not supported");
+  }
 };
 
 class CommonCLI {

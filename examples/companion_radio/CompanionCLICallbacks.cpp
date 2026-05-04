@@ -82,3 +82,7 @@ void CompanionCLICallbacks::applyTempRadioParams(float freq, float bw, uint8_t s
 void CompanionCLICallbacks::setRxBoostedGain(bool enable) {
   radio_driver.setRxBoostedGainMode(enable ? 1 : 0);
 }
+
+void CompanionCLICallbacks::formatTimesyncReply(char* reply) {
+  _mesh._ts.buildReply(reply, _mesh.getRTCClock());
+}
