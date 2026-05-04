@@ -4,6 +4,7 @@
 //           "MSK-3"          Moscow (UTC+3)
 //           "EET-2"          Eastern Europe (UTC+2)
 //           "CET-1CEST,M3.5.0,M10.5.0/3"  Central Europe with DST
+// Override in platformio.ini: -DDISPLAY_TZ="MSK-3"
 // See: https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html
 #ifndef DISPLAY_TZ
 #  define DISPLAY_TZ  "UTC0"
