@@ -33,6 +33,8 @@ class UITask : public AbstractUITask {
 #endif
   unsigned long _next_refresh, _auto_off;
   NodePrefs* _node_prefs;
+  int  _clock_dim_mode  = 0;   // 0=auto, 1=USB-aware, 2=clock-page-keep-on
+  bool _prev_usb_state  = false;
   char _alert[80];
   unsigned long _alert_expiry;
   int _msgcount;
@@ -87,6 +89,13 @@ public:
   bool peekTopMsg(ClockPMInfo& out) const;
   void consumeTopMsg();
   int  getUnreadMsgCount() const;
+
+  bool isOnUSBPower() const {
+    uint16_t mv = getBattMilliVolts();
+    return mv == 0 || mv > 4150;  // 0 = no battery, >4150 = charging
+  }
+  void setClockDimMode(int m) { _clock_dim_mode = m; }
+  int  getClockDimMode() const { return _clock_dim_mode; }
 
   bool isBuzzerQuiet() { 
 #ifdef PIN_BUZZER

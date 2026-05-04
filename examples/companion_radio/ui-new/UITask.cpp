@@ -121,6 +121,19 @@ class HomeScreen : public UIScreen {
   bool          _in_settings    = false;
   int           _settings_sel   = 0;
   unsigned long _pin_show_until = 0;
+  int           _pm_clock_mode  = 1;   // 0=all msgs switch screen, 1=PM inline only
+
+#ifdef WITH_COMPANION_CLI
+  static const int SETTINGS_N        = 6;
+  static const int SETTINGS_PM_IDX   = 3;
+  static const int SETTINGS_DIM_IDX  = 4;
+  static const int SETTINGS_BACK_IDX = 5;
+#else
+  static const int SETTINGS_N        = 3;
+  static const int SETTINGS_PM_IDX   = 0;
+  static const int SETTINGS_DIM_IDX  = 1;
+  static const int SETTINGS_BACK_IDX = 2;
+#endif
 
 
   void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) {
@@ -197,6 +210,7 @@ public:
 
   bool isOnClockPage() const { return _page == CLOCK; }
   void incrementClockPM() { _clock_pm_pending++; }
+  int  getPmClockMode()  const { return _pm_clock_mode; }
 
   void poll() override {
     if (_shutdown_init && !_task->isButtonPressed()) {  // must wait for USR button to be released
@@ -536,39 +550,52 @@ public:
         display.drawTextCentered(display.width() / 2, content_y + 8, "Settings");
         display.drawTextCentered(display.width() / 2, content_y + 24, PRESS_LABEL " to enter");
       } else {
+        static const char* pm_clok_vals[2] = { "all", "PM" };
+        static const char* dim_vals[3]     = { "auto", "USB", "page" };
 #ifdef WITH_COMPANION_CLI
-        const int N = 4;
-        static const char* labels[N] = { "CLI Chat", "CLI PIN", "Timesync", "Back" };
-        static const char* chat_vals[4]  = { "C+P", "cht", "PM", "OFF" };
-        static const char* ts_vals[3]    = { "a+g", "gps", "adv" };
-#else
-        const int N = 1;
-        static const char* labels[1] = { "Back" };
+        static const char* chat_vals[4] = { "C+P", "cht", "PM", "OFF" };
+        static const char* ts_vals[3]   = { "a+g", "gps", "adv" };
 #endif
         const int CURSOR_W = 6, LINE_H = 10, Y0 = 12;
         display.setColor(DisplayDriver::LIGHT);
         display.drawTextCentered(display.width() / 2, 2, "Settings");
-        for (int i = 0; i < N; i++) {
+        for (int i = 0; i < SETTINGS_N; i++) {
           int y = Y0 + i * LINE_H;
           display.setColor(DisplayDriver::LIGHT);
           display.setCursor(0, y);
           display.print(_settings_sel == i ? ">" : " ");
           display.setCursor(CURSOR_W, y);
-          display.print(labels[i]);
+          // label
+          const char* lbl = "Back";
 #ifdef WITH_COMPANION_CLI
-          if (i < N - 1) {
+          if      (i == 0) lbl = "CLI Chat";
+          else if (i == 1) lbl = "CLI PIN";
+          else if (i == 2) lbl = "Timesync";
+          else
+#endif
+          if      (i == SETTINGS_PM_IDX)   lbl = "PM CLOK";
+          else if (i == SETTINGS_DIM_IDX)  lbl = "CLOK DIM";
+          display.print(lbl);
+          // value (not for Back)
+          if (i != SETTINGS_BACK_IDX) {
             char val[12] = "";
+#ifdef WITH_COMPANION_CLI
             if (i == 0) {
               snprintf(val, sizeof(val), "%s", chat_vals[the_mesh.getChatMode()]);
             } else if (i == 1) {
               bool show = _pin_show_until && millis() < _pin_show_until;
               snprintf(val, sizeof(val), "%s", show ? the_mesh.getCliPin() : "****");
-            } else {
+            } else if (i == 2) {
               snprintf(val, sizeof(val), "%s", ts_vals[the_mesh.getTimesyncMode()]);
+            } else
+#endif
+            if (i == SETTINGS_PM_IDX) {
+              snprintf(val, sizeof(val), "%s", pm_clok_vals[_pm_clock_mode]);
+            } else if (i == SETTINGS_DIM_IDX) {
+              snprintf(val, sizeof(val), "%s", dim_vals[_task->getClockDimMode()]);
             }
             display.drawTextRightAlign(display.width() - 2, y, val);
           }
-#endif
         }
       }
     } else if (_page == HomePage::SHUTDOWN) {
@@ -592,8 +619,8 @@ public:
   }
 
   bool handleInput(char c) override {
-    // On CLOCK page (eInk only): intercept navigation while PMs are being read inline
-    if (_task->isEinkDisplay() && _page == HomePage::CLOCK && _clock_pm_pending > 0) {
+    // On CLOCK page: intercept navigation while PMs are being read inline
+    if (_page == HomePage::CLOCK && _clock_pm_pending > 0) {
       if (c == KEY_NEXT || c == KEY_RIGHT) {
         _task->consumeTopMsg();
         _clock_pm_pending--;
@@ -611,27 +638,25 @@ public:
         return true;
       }
       if (c == KEY_NEXT || c == KEY_RIGHT) {
-#ifdef WITH_COMPANION_CLI
-        _settings_sel = (_settings_sel + 1) % 4;
-#else
-        _settings_sel = 0;
-#endif
+        _settings_sel = (_settings_sel + 1) % SETTINGS_N;
         return true;
       }
       if (c == KEY_ENTER) {
+        if (_settings_sel == SETTINGS_BACK_IDX) {
+          _in_settings = false;
+        } else if (_settings_sel == SETTINGS_PM_IDX) {
+          _pm_clock_mode = (_pm_clock_mode + 1) % 2;
+        } else if (_settings_sel == SETTINGS_DIM_IDX) {
+          _task->setClockDimMode((_task->getClockDimMode() + 1) % 3);
 #ifdef WITH_COMPANION_CLI
-        if (_settings_sel == 0) {
+        } else if (_settings_sel == 0) {
           the_mesh.setChatMode((the_mesh.getChatMode() + 1) % 4);
         } else if (_settings_sel == 1) {
           _pin_show_until = millis() + 3000;
         } else if (_settings_sel == 2) {
           the_mesh.setTimesyncMode((the_mesh.getTimesyncMode() + 1) % 3);
-        } else {
-          _in_settings = false;
-        }
-#else
-        _in_settings = false;
 #endif
+        }
         return true;
       }
       return true;  // absorb all other keys in edit mode
@@ -965,18 +990,21 @@ void UITask::msgRead(int msgcount) {
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount, bool is_pm) {
   _msgcount = msgcount;
 
-  bool on_clock = isEinkDisplay() && (curr == home) &&
-                  ((HomeScreen*)home)->isOnClockPage();
+  bool on_clock = (curr == home) && ((HomeScreen*)home)->isOnClockPage();
 
   ((MsgPreviewScreen*)msg_preview)->addPreview(path_len, from_name, text, is_pm);
 
   if (on_clock) {
-    if (is_pm) {
-      // PM on clock page: show it inline, stay on clock page
+    int pm_mode = ((HomeScreen*)home)->getPmClockMode();
+    if (pm_mode == 1 && is_pm) {
+      // PM inline: stay on clock page, show PM overlay
       ((HomeScreen*)home)->incrementClockPM();
       _next_refresh = 100;
+    } else if (pm_mode == 0) {
+      // All messages switch to msg_preview
+      setCurrScreen(msg_preview);
     }
-    // Channel message on clock page: silently queued in msg_preview, no page switch
+    // pm_mode==1 && !is_pm: silently queued, no screen switch
   } else {
     setCurrScreen(msg_preview);
   }
@@ -1172,8 +1200,25 @@ void UITask::loop() {
       _display->endFrame();
     }
 #if AUTO_OFF_MILLIS > 0
-    if (millis() > _auto_off) {
-      _display->turnOff();
+    if (_clock_dim_mode == 1) {
+      // USB-aware: keep on while USB power, dim on battery
+      bool on_usb = isOnUSBPower();
+      if (on_usb != _prev_usb_state) {
+        _prev_usb_state = on_usb;
+        if (on_usb) { _display->turnOn(); _auto_off = millis() + AUTO_OFF_MILLIS; }
+      }
+      if (on_usb) {
+        _auto_off = millis() + AUTO_OFF_MILLIS;  // keep extending while on USB
+      } else if (millis() > _auto_off) {
+        _display->turnOff();
+      }
+    } else if (_clock_dim_mode == 2) {
+      // Clock-page-keep-on: don't dim while on CLOCK page
+      bool on_clock = home && ((HomeScreen*)home)->isOnClockPage();
+      if (on_clock) _auto_off = millis() + AUTO_OFF_MILLIS;
+      if (millis() > _auto_off) _display->turnOff();
+    } else {
+      if (millis() > _auto_off) _display->turnOff();
     }
 #endif
   }
