@@ -43,11 +43,15 @@ jobs:
           name: companion-firmwares
           path: out
 
+      - name: Get Release Notes
+        if: startsWith(github.ref, 'refs/tags/')
+        run: git tag -l --format='%(contents)' "${{ github.ref_name }}" > release_body.txt
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           name: Companion Firmware ${{ env.GIT_TAG_VERSION }}
-          body: ""
+          body_path: release_body.txt
           draft: true
           files: out/*
