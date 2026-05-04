@@ -291,12 +291,10 @@ public:
     // battery voltage
     renderBatteryIndicator(display, _task->getBattMilliVolts());
 
-    // curr page indicator (CLOCK page is hidden on non-eInk devices)
-    bool show_clock_page = _task->isEinkDisplay();
-    int visible_count = HomePage::Count - (show_clock_page ? 0 : 1);
+    // curr page indicator
+    int visible_count = HomePage::Count;
     int x = display.width() / 2 - 5 * (visible_count - 1);
     for (uint8_t i = 0; i < HomePage::Count; i++) {
-      if (i == HomePage::CLOCK && !show_clock_page) continue;
       if (i == _page) {
         display.fillRect(x-1, dot_y-1, 3, 3);
       } else {
@@ -328,23 +326,35 @@ public:
         display.drawTextCentered(display.width() / 2, content_y + 24, tmp);
       }
     } else if (_page == HomePage::CLOCK) {
-      // --- Large clock display (PM case handled above as early return) ---
+      // --- Large clock display ---
       _clock_pm_pending = 0;
       time_t now = time(nullptr);
       struct tm timeinfo;
       localtime_r(&now, &timeinfo);
       char timeBuf[6];
       strftime(timeBuf, sizeof(timeBuf), "%H:%M", &timeinfo);
-      display.setTextSize(8);
-      display.drawTextCentered(display.width() / 2, display.height() / 2 - 32, timeBuf);
-      display.setTextSize(1);
       char sourceBuf[32];
       snprintf(sourceBuf, sizeof(sourceBuf), "%s", the_mesh.getTimeSourceLabel());
       if (the_mesh.getTimeSyncCount() > 0 && the_mesh.getTimeSource() == MyMesh::TIME_SOURCE_ADVERT) {
         snprintf(sourceBuf, sizeof(sourceBuf), "%s %+lds",
                  the_mesh.getTimeSourceLabel(), (long)the_mesh.getTimeLastAdjustment());
       }
-      display.drawTextCentered(display.width() / 2, display.height() - 10, sourceBuf);
+      display.setColor(DisplayDriver::GREEN);
+      if (_task->isEinkDisplay()) {
+        display.setTextSize(8);
+        display.drawTextCentered(display.width() / 2, display.height() / 2 - 32, timeBuf);
+        display.setTextSize(1);
+        display.drawTextCentered(display.width() / 2, display.height() - 10, sourceBuf);
+      } else {
+        // OLED 128x64: size 3 (18px wide per char, 24px tall) fits "HH:MM" in 90px
+        display.setTextSize(3);
+        display.drawTextCentered(display.width() / 2, content_y, timeBuf);
+        display.setTextSize(1);
+        char dateBuf[12];
+        strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
+        display.drawTextCentered(display.width() / 2, content_y + 24 + 2, dateBuf);
+        display.drawTextCentered(display.width() / 2, display.height() - 8, sourceBuf);
+      }
       return 60000;  // refresh once per minute
     } else if (_page == HomePage::RECENT) {
       the_mesh.getRecentlyHeard(recent, UI_RECENT_LIST_SIZE);
@@ -582,8 +592,8 @@ public:
   }
 
   bool handleInput(char c) override {
-    // On CLOCK page: intercept navigation while PMs are being read
-    if (_page == HomePage::CLOCK && _clock_pm_pending > 0) {
+    // On CLOCK page (eInk only): intercept navigation while PMs are being read inline
+    if (_task->isEinkDisplay() && _page == HomePage::CLOCK && _clock_pm_pending > 0) {
       if (c == KEY_NEXT || c == KEY_RIGHT) {
         _task->consumeTopMsg();
         _clock_pm_pending--;
@@ -629,14 +639,10 @@ public:
 
     if (c == KEY_LEFT || c == KEY_PREV) {
       _page = (_page + HomePage::Count - 1) % HomePage::Count;
-      if (_page == HomePage::CLOCK && !_task->isEinkDisplay())
-        _page = (_page + HomePage::Count - 1) % HomePage::Count;
       return true;
     }
     if (c == KEY_NEXT || c == KEY_RIGHT) {
       _page = (_page + 1) % HomePage::Count;
-      if (_page == HomePage::CLOCK && !_task->isEinkDisplay())
-        _page = (_page + 1) % HomePage::Count;
       return true;
     }
     if (c == KEY_ENTER && _page == HomePage::BLUETOOTH) {
