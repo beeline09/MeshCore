@@ -551,7 +551,7 @@ public:
         display.drawTextCentered(display.width() / 2, content_y + 24, PRESS_LABEL " to enter");
       } else {
         static const char* pm_clok_vals[2] = { "all", "PM" };
-        static const char* dim_vals[3]     = { "auto", "USB", "page" };
+        static const char* dim_vals[3]     = { "AOF", "USB", "AON" };
 #ifdef WITH_COMPANION_CLI
         static const char* chat_vals[4] = { "C+P", "cht", "PM", "OFF" };
         static const char* ts_vals[3]   = { "a+g", "gps", "adv" };
@@ -1201,23 +1201,16 @@ void UITask::loop() {
     }
 #if AUTO_OFF_MILLIS > 0
     if (_clock_dim_mode == 1) {
-      // USB-aware: keep on while USB power, dim on battery
-      bool on_usb = isOnUSBPower();
-      if (on_usb != _prev_usb_state) {
-        _prev_usb_state = on_usb;
-        if (on_usb) { _display->turnOn(); _auto_off = millis() + AUTO_OFF_MILLIS; }
-      }
-      if (on_usb) {
-        _auto_off = millis() + AUTO_OFF_MILLIS;  // keep extending while on USB
-      } else if (millis() > _auto_off) {
-        _display->turnOff();
-      }
+      // USB: no dim while USB connected; on battery behave like AOF (mode stays USB)
+      if (isOnUSBPower()) _auto_off = millis() + AUTO_OFF_MILLIS;
+      if (millis() > _auto_off) _display->turnOff();
     } else if (_clock_dim_mode == 2) {
-      // Clock-page-keep-on: don't dim while on CLOCK page
-      bool on_clock = home && ((HomeScreen*)home)->isOnClockPage();
-      if (on_clock) _auto_off = millis() + AUTO_OFF_MILLIS;
+      // AON: no dim while on CLOCK page
+      if (home && ((HomeScreen*)home)->isOnClockPage())
+        _auto_off = millis() + AUTO_OFF_MILLIS;
       if (millis() > _auto_off) _display->turnOff();
     } else {
+      // AOF: normal auto-off
       if (millis() > _auto_off) _display->turnOff();
     }
 #endif
