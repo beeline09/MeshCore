@@ -104,6 +104,7 @@ class HomeScreen : public UIScreen {
 #if UI_SENSORS_PAGE == 1
     SENSORS,
 #endif
+    SETTINGS,
     SHUTDOWN,
     Count    // keep as last
   };
@@ -116,6 +117,10 @@ class HomeScreen : public UIScreen {
   bool _shutdown_init;
   int _clock_pm_pending;   // PMs queued for inline display on CLOCK page
   AdvertPath recent[UI_RECENT_LIST_SIZE];
+
+  bool          _in_settings    = false;
+  int           _settings_sel   = 0;
+  unsigned long _pin_show_until = 0;
 
 
   void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) {
@@ -196,6 +201,9 @@ public:
   void poll() override {
     if (_shutdown_init && !_task->isButtonPressed()) {  // must wait for USR button to be released
       _task->shutdown();
+    }
+    if (_pin_show_until && millis() >= _pin_show_until) {
+      _pin_show_until = 0;  // render() will show **** on next cycle
     }
   }
 
@@ -511,6 +519,48 @@ public:
       if (sensors_scroll) sensors_scroll_offset = (sensors_scroll_offset+1)%sensors_nb;
       else sensors_scroll_offset = 0;
 #endif
+    } else if (_page == HomePage::SETTINGS) {
+      display.setTextSize(hdr_size);
+      if (!_in_settings) {
+        display.setColor(DisplayDriver::GREEN);
+        display.drawTextCentered(display.width() / 2, content_y + 8, "Settings");
+        display.drawTextCentered(display.width() / 2, content_y + 24, PRESS_LABEL " to enter");
+      } else {
+#ifdef WITH_COMPANION_CLI
+        const int N = 4;
+        static const char* labels[N] = { "CLI Chat", "CLI PIN", "Timesync", "Back" };
+        static const char* chat_vals[4]  = { "C+P", "cht", "PM", "OFF" };
+        static const char* ts_vals[3]    = { "a+g", "gps", "adv" };
+#else
+        const int N = 1;
+        static const char* labels[1] = { "Back" };
+#endif
+        const int CURSOR_W = 6, LINE_H = 10, Y0 = 12;
+        display.setColor(DisplayDriver::LIGHT);
+        display.drawTextCentered(display.width() / 2, 2, "Settings");
+        for (int i = 0; i < N; i++) {
+          int y = Y0 + i * LINE_H;
+          display.setColor(DisplayDriver::LIGHT);
+          display.setCursor(0, y);
+          display.print(_settings_sel == i ? ">" : " ");
+          display.setCursor(CURSOR_W, y);
+          display.print(labels[i]);
+#ifdef WITH_COMPANION_CLI
+          if (i < N - 1) {
+            char val[12] = "";
+            if (i == 0) {
+              snprintf(val, sizeof(val), "%s", chat_vals[the_mesh.getChatMode()]);
+            } else if (i == 1) {
+              bool show = _pin_show_until && millis() < _pin_show_until;
+              snprintf(val, sizeof(val), "%s", show ? the_mesh.getCliPin() : "****");
+            } else {
+              snprintf(val, sizeof(val), "%s", ts_vals[the_mesh.getTimesyncMode()]);
+            }
+            display.drawTextRightAlign(display.width() - 2, y, val);
+          }
+#endif
+        }
+      }
     } else if (_page == HomePage::SHUTDOWN) {
       display.setColor(DisplayDriver::GREEN);
       display.setTextSize(hdr_size);
@@ -519,6 +569,13 @@ public:
       } else {
         display.drawXbm((display.width() - 32) / 2, content_y, power_icon, 32, 32);
         display.drawTextCentered(display.width() / 2, display.height() - 8*hdr_size - 2, "hibernate:" PRESS_LABEL);
+      }
+    }
+    if (_page == HomePage::SETTINGS && _in_settings && _pin_show_until) {
+      unsigned long now = millis();
+      if (now < _pin_show_until) {
+        int ms = (int)(_pin_show_until - now);
+        return ms < 100 ? 100 : ms;  // refresh exactly when PIN expires
       }
     }
     return 5000;   // next render after 5000 ms
@@ -535,6 +592,39 @@ public:
       if (c == KEY_LEFT || c == KEY_PREV) {
         return true;  // block page nav while reading PMs
       }
+    }
+
+    // Settings edit mode absorbs all navigation before standard page switching
+    if (_page == HomePage::SETTINGS && _in_settings) {
+      if (c == KEY_LEFT || c == KEY_PREV) {
+        _in_settings = false;
+        return true;
+      }
+      if (c == KEY_NEXT || c == KEY_RIGHT) {
+#ifdef WITH_COMPANION_CLI
+        _settings_sel = (_settings_sel + 1) % 4;
+#else
+        _settings_sel = 0;
+#endif
+        return true;
+      }
+      if (c == KEY_ENTER) {
+#ifdef WITH_COMPANION_CLI
+        if (_settings_sel == 0) {
+          the_mesh.setChatMode((the_mesh.getChatMode() + 1) % 4);
+        } else if (_settings_sel == 1) {
+          _pin_show_until = millis() + 3000;
+        } else if (_settings_sel == 2) {
+          the_mesh.setTimesyncMode((the_mesh.getTimesyncMode() + 1) % 3);
+        } else {
+          _in_settings = false;
+        }
+#else
+        _in_settings = false;
+#endif
+        return true;
+      }
+      return true;  // absorb all other keys in edit mode
     }
 
     if (c == KEY_LEFT || c == KEY_PREV) {
@@ -579,6 +669,11 @@ public:
       return true;
     }
 #endif
+    if (c == KEY_ENTER && _page == HomePage::SETTINGS) {
+      _in_settings = true;
+      _settings_sel = 0;
+      return true;
+    }
     if (c == KEY_ENTER && _page == HomePage::SHUTDOWN) {
       _shutdown_init = true;  // need to wait for button to be released
       return true;

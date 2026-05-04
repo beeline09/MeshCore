@@ -196,6 +196,31 @@ protected:
 public:
   void savePrefs() { _store->savePrefs(_prefs, sensors.node_lat, sensors.node_lon); }
 
+#ifdef WITH_COMPANION_CLI
+  const char* getCliPin() const { return _cli_pin; }
+
+  int getChatMode() const {
+    if ( _remote_cli_enabled &&  _terminal_cli_enabled) return 0;  // C+P
+    if (!_remote_cli_enabled &&  _terminal_cli_enabled) return 1;  // cht
+    if ( _remote_cli_enabled && !_terminal_cli_enabled) return 2;  // PM
+    return 3;                                                       // OFF
+  }
+  void setChatMode(int m) {
+    _remote_cli_enabled   = (m == 0 || m == 2);
+    _terminal_cli_enabled = (m == 0 || m == 1);
+  }
+
+  int getTimesyncMode() const {
+    if ( _ts_from_adverts &&  _ts_from_messages) return 0;  // a+g
+    if (!_ts_from_adverts && !_ts_from_messages) return 1;  // gps
+    return 2;                                                // adv
+  }
+  void setTimesyncMode(int m) {
+    _ts_from_adverts  = (m == 0 || m == 2);
+    _ts_from_messages = (m == 0);
+  }
+#endif
+
 #if ENV_INCLUDE_GPS == 1
   void applyGpsPrefs() {
     sensors.setSettingValue("gps", _prefs.gps_enabled ? "1" : "0");
