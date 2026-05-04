@@ -357,9 +357,12 @@ public:
       }
       display.setColor(DisplayDriver::GREEN);
       if (_task->isEinkDisplay()) {
+        char dateBuf[12];
+        strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
         display.setTextSize(8);
         display.drawTextCentered(display.width() / 2, display.height() / 2 - 32, timeBuf);
         display.setTextSize(1);
+        display.drawTextCentered(display.width() / 2, display.height() - 20, dateBuf);
         display.drawTextCentered(display.width() / 2, display.height() - 10, sourceBuf);
       } else {
         // OLED 128x64: size 3 (18px wide per char, 24px tall) fits "HH:MM" in 90px
