@@ -89,10 +89,6 @@ public:
   void consumeTopMsg();
   int  getUnreadMsgCount() const;
 
-  bool isOnUSBPower() const {
-    uint16_t mv = getBattMilliVolts();
-    return mv == 0 || mv > 4200;  // TP4056 CV phase = exactly 4.20V; full battery at rest under load drops to ~4.15V
-  }
   void setClockDimMode(int m) { _clock_dim_mode = m; }
   int  getClockDimMode() const { return _clock_dim_mode; }
 

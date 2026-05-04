@@ -556,7 +556,7 @@ public:
         display.drawTextCentered(display.width() / 2, content_y + 24, PRESS_LABEL " to enter");
       } else {
         static const char* pm_clok_vals[2] = { "all", "PM" };
-        static const char* dim_vals[3]     = { "AOF", "USB", "AON" };
+        static const char* dim_vals[2]     = { "ON", "OFF" };
 #ifdef WITH_COMPANION_CLI
         static const char* chat_vals[4] = { "C+P", "cht", "PM", "OFF" };
         static const char* ts_vals[3]   = { "a+g", "gps", "adv" };
@@ -654,7 +654,7 @@ public:
         } else if (_settings_sel == SETTINGS_PM_IDX) {
           _pm_clock_mode = (_pm_clock_mode + 1) % 2;
         } else if (_settings_sel == SETTINGS_DIM_IDX) {
-          _task->setClockDimMode((_task->getClockDimMode() + 1) % 3);
+          _task->setClockDimMode((_task->getClockDimMode() + 1) % 2);
 #ifdef WITH_COMPANION_CLI
         } else if (_settings_sel == 0) {
           the_mesh.setChatMode((the_mesh.getChatMode() + 1) % 4);
@@ -1209,16 +1209,12 @@ void UITask::loop() {
     }
 #if AUTO_OFF_MILLIS > 0
     if (_clock_dim_mode == 1) {
-      // USB: no dim while USB connected; on battery behave like AOF (mode stays USB)
-      if (isOnUSBPower()) _auto_off = millis() + AUTO_OFF_MILLIS;
-      if (millis() > _auto_off) _display->turnOff();
-    } else if (_clock_dim_mode == 2) {
-      // AON: no dim while on CLOCK page
+      // OFF: no dim while on CLOCK page
       if (home && ((HomeScreen*)home)->isOnClockPage())
         _auto_off = millis() + AUTO_OFF_MILLIS;
       if (millis() > _auto_off) _display->turnOff();
     } else {
-      // AOF: normal auto-off
+      // ON: normal auto-off
       if (millis() > _auto_off) _display->turnOff();
     }
 #endif
