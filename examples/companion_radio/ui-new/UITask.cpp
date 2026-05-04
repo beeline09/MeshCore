@@ -120,6 +120,8 @@ class HomeScreen : public UIScreen {
 
   bool          _in_settings    = false;
   int           _settings_sel   = 0;
+  int           _settings_scroll = 0;   // first visible item index
+  int           _settings_visible = 4;  // updated in render(), used in handleInput()
   unsigned long _pin_show_until = 0;
   int           _pm_clock_mode  = 1;   // 0=all msgs switch screen, 1=PM inline only
 
@@ -556,11 +558,11 @@ public:
         static const char* chat_vals[4] = { "C+P", "cht", "PM", "OFF" };
         static const char* ts_vals[3]   = { "a+g", "gps", "adv" };
 #endif
-        const int CURSOR_W = 6, LINE_H = 10, Y0 = 12;
+        const int CURSOR_W = 6, LINE_H = 10, Y0 = content_y;
+        _settings_visible = (display.height() - Y0) / LINE_H;
         display.setColor(DisplayDriver::LIGHT);
-        display.drawTextCentered(display.width() / 2, 2, "Settings");
-        for (int i = 0; i < SETTINGS_N; i++) {
-          int y = Y0 + i * LINE_H;
+        for (int i = _settings_scroll; i < SETTINGS_N && i < _settings_scroll + _settings_visible; i++) {
+          int y = Y0 + (i - _settings_scroll) * LINE_H;
           display.setColor(DisplayDriver::LIGHT);
           display.setCursor(0, y);
           display.print(_settings_sel == i ? ">" : " ");
@@ -639,6 +641,8 @@ public:
       }
       if (c == KEY_NEXT || c == KEY_RIGHT) {
         _settings_sel = (_settings_sel + 1) % SETTINGS_N;
+        if (_settings_sel == 0) _settings_scroll = 0;
+        else if (_settings_sel >= _settings_scroll + _settings_visible) _settings_scroll = _settings_sel - _settings_visible + 1;
         return true;
       }
       if (c == KEY_ENTER) {
@@ -703,6 +707,7 @@ public:
     if (c == KEY_ENTER && _page == HomePage::SETTINGS) {
       _in_settings = true;
       _settings_sel = 0;
+      _settings_scroll = 0;
       return true;
     }
     if (c == KEY_ENTER && _page == HomePage::SHUTDOWN) {
