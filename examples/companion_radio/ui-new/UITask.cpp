@@ -359,8 +359,14 @@ public:
       if (_task->isEinkDisplay()) {
         char dateBuf[12];
         strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
-        display.setTextSize(8);
-        display.drawTextCentered(display.width() / 2, display.height() / 2 - 32, timeBuf);
+        // Auto-scale: "HH:MM" = 5 chars × 6px/unit; leave 22px at bottom for date+source
+        int clock_sz = min(display.width() / 30, (display.height() - 22) / 8);
+        if (clock_sz < 1) clock_sz = 1;
+        if (clock_sz > 8) clock_sz = 8;
+        int clock_y = (display.height() - 22 - 8 * clock_sz) / 2;
+        if (clock_y < 0) clock_y = 0;
+        display.setTextSize(clock_sz);
+        display.drawTextCentered(display.width() / 2, clock_y, timeBuf);
         display.setTextSize(1);
         display.drawTextCentered(display.width() / 2, display.height() - 20, dateBuf);
         display.drawTextCentered(display.width() / 2, display.height() - 10, sourceBuf);
@@ -561,7 +567,7 @@ public:
         static const char* chat_vals[4] = { "C+P", "cht", "PM", "OFF" };
         static const char* ts_vals[3]   = { "a+g", "gps", "adv" };
 #endif
-        const int CURSOR_W = 6, LINE_H = 10, Y0 = content_y;
+        const int CURSOR_W = 6 * hdr_size, LINE_H = 8 * hdr_size + 2, Y0 = content_y;
         _settings_visible = (display.height() - Y0) / LINE_H;
         display.setColor(DisplayDriver::LIGHT);
         for (int i = _settings_scroll; i < SETTINGS_N && i < _settings_scroll + _settings_visible; i++) {
@@ -578,8 +584,8 @@ public:
           else if (i == 2) lbl = "Timesync";
           else
 #endif
-          if      (i == SETTINGS_PM_IDX)   lbl = "PM CLOK";
-          else if (i == SETTINGS_DIM_IDX)  lbl = "CLOK DIM";
+          if      (i == SETTINGS_PM_IDX)   lbl = "PM CLOCK";
+          else if (i == SETTINGS_DIM_IDX)  lbl = "CLOCK DIM";
           display.print(lbl);
           // value (not for Back)
           if (i != SETTINGS_BACK_IDX) {
