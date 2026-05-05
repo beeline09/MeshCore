@@ -38,14 +38,15 @@ bool isEink() const override { return true; }  // + добавлен в кажд
 FIRST → CLOCK → RECENT → RADIO → BLUETOOTH → ADVERT → [GPS] → [SENSORS] → SHUTDOWN
 ```
 
-На **не-eInk** устройствах страница `CLOCK` прозрачно пропускается при навигации — пользователь её не видит, индикатор точек её не показывает.
+Страница `CLOCK` доступна на всех устройствах с дисплеем (OLED и e-ink).
+На e-ink используется шрифт `setTextSize(8)` (крупный), на OLED — `setTextSize(3)`.
 
 ### Enum `HomePage`
 
 ```cpp
 enum HomePage {
   FIRST,
-  CLOCK,     // eInk only: large clock + PM preview inline  ← новый
+  CLOCK,     // large clock + PM preview inline  ← новый
   RECENT,
   ...
 };
@@ -53,18 +54,8 @@ enum HomePage {
 
 ### Индикатор страниц (точки)
 
-Количество видимых точек зависит от `isEinkDisplay()`:
-
 ```cpp
-int visible_count = HomePage::Count - (show_clock_page ? 0 : 1);
-// CLOCK-точка не рисуется на не-eInk
-```
-
-### Пропуск при навигации (не-eInk)
-
-```cpp
-if (_page == HomePage::CLOCK && !_task->isEinkDisplay())
-  _page = (_page ± 1 + Count) % Count;   // пропустить
+int visible_count = HomePage::Count;  // все страницы видимы
 ```
 
 ---
@@ -75,10 +66,35 @@ if (_page == HomePage::CLOCK && !_task->isEinkDisplay())
 
 ### Состояние «часы» (`_clock_pm_pending == 0`)
 
+На e-ink:
+```
+     14:35
+  Mon 04 May
+   advert +2s
+```
+
+На OLED (шрифт меньше, экономит место):
+```
+  14:35
+Mon 04 May
+ advert +2s
+```
+
+Рендер: часы → дата (`%a %d %b`) → источник синхронизации (`advert +2s` / `GPS` / ...).
+
 ```cpp
+// e-ink
 display.setTextSize(8);
-display.drawTextCentered(display.width() / 2, display.height() / 2 - 32, "HH:MM");
+display.drawTextCentered(..., "HH:MM");
+display.drawTextCentered(display.width()/2, display.height()-20, dateBuf);  // дата
+display.drawTextCentered(display.width()/2, display.height()-10, sourceBuf);
 return 60000;  // обновление раз в минуту
+
+// OLED
+display.setTextSize(3);
+display.drawTextCentered(..., "HH:MM");
+display.drawTextCentered(..., dateBuf);
+display.drawTextCentered(..., sourceBuf);
 ```
 
 ### Состояние «PM» (`_clock_pm_pending > 0`)

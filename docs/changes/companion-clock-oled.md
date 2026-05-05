@@ -40,21 +40,18 @@ KEY_NEXT закрывает PM и возвращает к часам.
 | `all` | Любое сообщение переключает на общий чат (msg_preview) |
 | `PM` *(по умолчанию)* | PM показывается inline; канальные сообщения — в очередь без переключения |
 
-### CLOK DIM `[AOF / USB / AON]`
+### CLOK DIM `[ON / OFF]`
 
-Управление гашением OLED экрана.
+Управление гашением OLED экрана на странице CLOCK.
 
 | Значение | Поведение |
 |----------|-----------|
-| `AOF` *(по умолчанию)* | Стандартное гашение через AUTO_OFF_MILLIS (15 сек без активности) |
-| `USB` | USB подключён → таймер постоянно сдвигается, экран не гаснет; на батарее → как AOF. Режим не сбрасывается при отключении USB |
-| `AON` | На вкладке CLOCK таймер постоянно сдвигается, экран не гаснет; на других вкладках → как AOF |
-
-USB детектируется через напряжение батареи: `getBattMilliVolts() == 0 || > 4150mV`.
+| `ON` *(по умолчанию)* | Стандартное гашение через AUTO_OFF_MILLIS (15 сек без активности) |
+| `OFF` | На вкладке CLOCK таймер постоянно сдвигается — экран не гаснет; на других вкладках стандартное гашение |
 
 ## Изменённые файлы
 
 | Файл | Изменение |
 |------|-----------|
-| `examples/companion_radio/ui-new/UITask.h` | `_clock_dim_mode`, `isOnUSBPower()`, `setClockDimMode()` |
+| `examples/companion_radio/ui-new/UITask.h` | `_clock_dim_mode`, `setClockDimMode()`, `getClockDimMode()` |
 | `examples/companion_radio/ui-new/UITask.cpp` | CLOCK render для OLED, PM inline без eInk guard, `newMsg()` с pm_clock_mode, auto-off с режимами, Settings +2 пункта |

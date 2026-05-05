@@ -70,6 +70,14 @@ Companion radio узлы не имели интерфейса для измен�
 Параметры `timesync.*` — **runtime only**, сбрасываются при перезагрузке.
 Флаги `remote.cli` и `terminal.cli` — **runtime only**, восстанавливаются в `on` при перезагрузке.
 
+## Исправления
+
+**Trailing whitespace → "Unknown command"**  
+Если companion-app добавляет `\r` или `\n` в конце текста PM, команда приходила как
+`"timesync\r"`. `strcmp` не совпадал ни в `handleCliCmd`, ни в CommonCLI (`command[8]` не был
+`\0` или `' '`), и оба пути заканчивались "Unknown command".  
+Фикс: `handleRemoteCLI` и `handleTerminalCLI` обрезают trailing whitespace перед любым сравнением.
+
 ## Изменённые файлы
 
 | Файл | Изменение |

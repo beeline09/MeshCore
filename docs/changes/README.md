@@ -17,3 +17,7 @@
 | [companion-msg-timesync.md](companion-msg-timesync.md) | `examples/companion_radio/MyMesh.*` | Синхронизация времени companion через таймстемпы личных и публичных сообщений |
 | [promicro-power-management.md](promicro-power-management.md) | `variants/promicro/`, `variants/promicro_eink_spi_v2/` | Управление питанием nRF52 ProMicro (Phase 1): LPCOMP + VBUS wake |
 | [adc-multiplier.md](adc-multiplier.md) | `src/helpers/ESP32Board.h`, `variants/heltec_*/` | Runtime-множитель АЦП для калибровки напряжения батареи ESP32 |
+| [companion-cli.md](companion-cli.md) | `examples/companion_radio/MyMesh.*`, `CompanionCLICallbacks.*` | Remote CLI (PM+PIN) и TerminalCLI (канал) для управления companion-нодой без Serial |
+| [companion-settings-ui.md](companion-settings-ui.md) | `examples/companion_radio/ui-new/UITask.cpp` | Страница Settings в HomeScreen: CLI Chat, PIN reveal, Timesync, PM CLOK, CLOK DIM — навигация одной кнопкой |
+| [companion-clock-oled.md](companion-clock-oled.md) | `examples/companion_radio/ui-new/UITask.cpp` | Страница CLOCK на OLED (size-3 шрифт), PM inline, настройки PM CLOK и CLOK DIM |
+| [display-tz.md](display-tz.md) | `variants/*/target.h`, `UITask.cpp` | POSIX часовой пояс для страницы CLOCK; дефолт UTC0 во всех вариантах с дисплеем |

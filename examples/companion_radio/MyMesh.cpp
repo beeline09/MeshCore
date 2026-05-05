@@ -2492,6 +2492,14 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
 void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const char* cmd) {
   char from_hex[9];
   mesh::Utils::toHex(from_hex, from.id.pub_key, 4);
+
+  char cmdBuf[256];
+  strncpy(cmdBuf, cmd, sizeof(cmdBuf) - 1);
+  cmdBuf[sizeof(cmdBuf) - 1] = '\0';
+  char* e = cmdBuf + strlen(cmdBuf);
+  while (e > cmdBuf && (e[-1] == ' ' || e[-1] == '\r' || e[-1] == '\n')) *--e = '\0';
+  cmd = cmdBuf;
+
   MESH_DEBUG_PRINTLN("CLI/PM from=%s cmd='%s'", from_hex, cmd);
 
   char buf[512];
@@ -2513,6 +2521,13 @@ void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const 
 }
 
 void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* cmd) {
+  char cmdBuf[256];
+  strncpy(cmdBuf, cmd, sizeof(cmdBuf) - 1);
+  cmdBuf[sizeof(cmdBuf) - 1] = '\0';
+  char* e = cmdBuf + strlen(cmdBuf);
+  while (e > cmdBuf && (e[-1] == ' ' || e[-1] == '\r' || e[-1] == '\n')) *--e = '\0';
+  cmd = cmdBuf;
+
   MESH_DEBUG_PRINTLN("CLI/Terminal ch=%u cmd='%s'", ch_idx, cmd);
 
   char buf[512];
