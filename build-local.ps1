@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-# build-local.ps1 — build specified PlatformIO envs and produce all firmware types.
+# build-local.ps1 - build specified PlatformIO envs and collect firmware artifacts.
 #
 # Usage:
 #   .\build-local.ps1 Heltec_E213_companion_radio_ble
@@ -7,10 +7,11 @@
 #   .\build-local.ps1 -Envs Heltec_E213_companion_radio_ble -DisableDebug
 #
 # Output files land in out\ with names matching the GitHub Action convention:
-#   <env>-<version>-<hash>.bin          (ESP32 update binary)
-#   <env>-<version>-<hash>-merged.bin   (ESP32 full flash)
-#   <env>-<version>-<hash>.uf2          (NRF52/RP2040 USB drag-and-drop)
-#   <env>-<version>-<hash>.zip          (NRF52 BLE DFU OTA)
+#   <env>-<version>-<hash>.bin          (update binary)
+#   <env>-<version>-<hash>-merged.bin   (full flash image)
+#   <env>-<version>-<hash>.uf2          (USB drag-and-drop)
+#   <env>-<version>-<hash>.zip          (BLE DFU OTA)
+#   <env>-<version>-<hash>.hex          (hex image, when produced)
 
 param(
     [Parameter(Mandatory, Position = 0, ValueFromRemainingArguments)]
@@ -22,13 +23,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$BASH = 'C:\Program Files\Git\bin\bash.exe'
 $UF2CONV = "bin\uf2conv\uf2conv.py"
 
-# ── Version from last tag ─────────────────────────────────────────────────────
+# Version from last tag.
 $lastTag = git describe --tags --abbrev=0 2>$null
 if (-not $lastTag) { $lastTag = 'v0.0.0' }
-# Strip everything up to and including the last '-' (removes "companion-" prefix etc.)
+# Strip everything up to and including the last '-' (removes "companion-" prefix etc.).
 $gitTagVersion = $lastTag -replace '^.*-(?=v\d)', ''
 $commitHash = (git rev-parse --short HEAD).Trim()
 $versionString = "$gitTagVersion-$commitHash"
@@ -37,7 +37,7 @@ Write-Host "Tag:     $lastTag"
 Write-Host "Version: $versionString"
 Write-Host ""
 
-# ── Platform detection via pio project config --json-output ───────────────────
+# Platform detection via pio project config --json-output.
 $pioConfigJson = (pio project config --json-output 2>$null) -join "`n"
 
 function Get-EnvPlatform([string]$EnvName) {
@@ -57,7 +57,29 @@ for section, options in data:
     return $data.Trim()
 }
 
-# ── Debug flag stripping ──────────────────────────────────────────────────────
+function Normalize-Envs([string[]]$RawEnvs) {
+    $normalized = @()
+    foreach ($item in $RawEnvs) {
+        foreach ($part in ($item -split ',')) {
+            $name = $part.Trim()
+            if ($name) { $normalized += $name }
+        }
+    }
+    return $normalized
+}
+
+function Copy-Artifact([string]$Source, [string]$Dest) {
+    if (Test-Path $Source) {
+        Copy-Item $Source $Dest -Force
+        Write-Host "  -> $Dest"
+        return $true
+    }
+    return $false
+}
+
+$Envs = Normalize-Envs $Envs
+
+# Debug flag stripping.
 $debugFlags = ''
 if ($DisableDebug) {
     $debugFlags = '-UMESH_DEBUG -UBLE_DEBUG_LOGGING -UWIFI_DEBUG_LOGGING -UBRIDGE_DEBUG -UGPS_NMEA_DEBUG -UCORE_DEBUG_LEVEL'
@@ -65,12 +87,11 @@ if ($DisableDebug) {
 
 $null = New-Item -ItemType Directory -Force -Path 'out'
 
-# ── Build loop ────────────────────────────────────────────────────────────────
 $built  = @()
 $failed = @()
 
 foreach ($env in $Envs) {
-    Write-Host "════════════════════════════════════════════════"
+    Write-Host "================================================"
     Write-Host "  ENV: $env"
 
     $platform = Get-EnvPlatform $env
@@ -88,59 +109,25 @@ foreach ($env in $Envs) {
     if ($ok) {
         if ($platform -eq 'ESP32_PLATFORM') {
             pio run -t mergebin -e $env
-            foreach ($pair in @(
-                @("$buildDir\firmware.bin",        "out\$filename.bin"),
-                @("$buildDir\firmware-merged.bin", "out\$filename-merged.bin")
-            )) {
-                if (Test-Path $pair[0]) {
-                    Copy-Item $pair[0] $pair[1] -Force
-                    Write-Host "  -> $($pair[1])"
-                }
-            }
-
         } elseif ($platform -eq 'NRF52_PLATFORM') {
-            python3 $UF2CONV "$buildDir\firmware.hex" -c -o "$buildDir\firmware.uf2" -f 0xADA52840
-            foreach ($pair in @(
-                @("$buildDir\firmware.uf2", "out\$filename.uf2"),
-                @("$buildDir\firmware.zip", "out\$filename.zip")
-            )) {
-                if (Test-Path $pair[0]) {
-                    Copy-Item $pair[0] $pair[1] -Force
-                    Write-Host "  -> $($pair[1])"
-                }
-            }
-
-        } elseif ($platform -eq 'RP2040_PLATFORM') {
-            foreach ($pair in @(
-                @("$buildDir\firmware.bin", "out\$filename.bin"),
-                @("$buildDir\firmware.uf2", "out\$filename.uf2")
-            )) {
-                if (Test-Path $pair[0]) {
-                    Copy-Item $pair[0] $pair[1] -Force
-                    Write-Host "  -> $($pair[1])"
-                }
-            }
-
-        } elseif ($platform -eq 'STM32_PLATFORM') {
-            foreach ($pair in @(
-                @("$buildDir\firmware.bin", "out\$filename.bin"),
-                @("$buildDir\firmware.hex", "out\$filename.hex")
-            )) {
-                if (Test-Path $pair[0]) {
-                    Copy-Item $pair[0] $pair[1] -Force
-                    Write-Host "  -> $($pair[1])"
-                }
-            }
-
-        } else {
-            if (Test-Path "$buildDir\firmware.bin") {
-                Copy-Item "$buildDir\firmware.bin" "out\$filename.bin" -Force
-                Write-Host "  -> out\$filename.bin  (unknown platform, fallback)"
+            pio run -t create_uf2 -e $env
+            if ((-not (Test-Path "$buildDir\firmware.uf2")) -and (Test-Path "$buildDir\firmware.hex")) {
+                python3 $UF2CONV "$buildDir\firmware.hex" -c -o "$buildDir\firmware.uf2" -f 0xADA52840
             }
         }
 
-        $built += $env
+        $copied = 0
+        if (Copy-Artifact "$buildDir\firmware.bin"        "out\$filename.bin")        { $copied++ }
+        if (Copy-Artifact "$buildDir\firmware-merged.bin" "out\$filename-merged.bin") { $copied++ }
+        if (Copy-Artifact "$buildDir\firmware.uf2"        "out\$filename.uf2")        { $copied++ }
+        if (Copy-Artifact "$buildDir\firmware.zip"        "out\$filename.zip")        { $copied++ }
+        if (Copy-Artifact "$buildDir\firmware.hex"        "out\$filename.hex")        { $copied++ }
 
+        if ($copied -eq 0) {
+            Write-Host "  WARNING: no firmware artifacts found in $buildDir"
+        }
+
+        $built += $env
     } else {
         Write-Host "  FAILED: $env"
         $failed += $env
@@ -149,8 +136,7 @@ foreach ($env in $Envs) {
     Write-Host ""
 }
 
-# ── Summary ───────────────────────────────────────────────────────────────────
-Write-Host "════════════════════════════════════════════════"
+Write-Host "================================================"
 Write-Host "Built $($built.Count) / $($Envs.Count) envs."
 if ($failed.Count -gt 0) { Write-Host "Failed: $($failed -join ', ')" }
 Write-Host ""
