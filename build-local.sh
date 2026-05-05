@@ -55,7 +55,20 @@ echo "Version: ${FIRMWARE_VERSION_STRING}"
 echo ""
 
 # Platform detection (reuses build.sh logic).
-PIO_CONFIG_JSON=$(pio project config --json-output 2>/dev/null)
+if ! command -v pio >/dev/null 2>&1; then
+  echo "ERROR: pio is not available in this bash environment."
+  if grep -qi microsoft /proc/version 2>/dev/null; then
+    echo "This looks like WSL bash. Install PlatformIO inside WSL, use Git Bash, or run .\\build-local.ps1 from PowerShell."
+  else
+    echo "Run this script from a shell where PlatformIO is on PATH, or use .\\build-local.ps1 from PowerShell."
+  fi
+  exit 1
+fi
+
+if ! PIO_CONFIG_JSON=$(pio project config --json-output); then
+  echo "ERROR: failed to read PlatformIO project config."
+  exit 1
+fi
 
 get_platform_for_env() {
   echo "$PIO_CONFIG_JSON" | python3 -c "
