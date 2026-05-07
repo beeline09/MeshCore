@@ -2285,9 +2285,13 @@ void MyMesh::loop() {
   }
 #endif
 
+#ifdef WITH_WIFI_SWITCHING
+  checkWifiConnection();
+#endif
+
   if (_cli_rescue) {
     checkCLIRescueCmd();
-  } else {
+  } else if (_serial) {
     checkSerialInterface();
   }
 
@@ -2298,7 +2302,7 @@ void MyMesh::loop() {
   }
 
 #ifdef DISPLAY_CLASS
-  if (_ui) _ui->setHasConnection(_serial->isConnected());
+  if (_ui && _serial) _ui->setHasConnection(_serial->isConnected());
 #endif
 }
 
@@ -2483,6 +2487,100 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
     _terminal_cli_enabled = false;
     strcpy(buf, found ? "terminal.cli: off (channel removed)" : "terminal.cli: off");
 
+#ifdef WITH_WIFI_SWITCHING
+  } else if (strcmp(cmd, "wifi list") == 0) {
+    if (_wifi_prefs.network_count == 0) {
+      strcpy(buf, "No WiFi networks stored. Use: wifi add <ssid> <pass>");
+    } else {
+      int n = 0;
+      for (int i = 0; i < _wifi_prefs.network_count; i++)
+        n += snprintf(buf + n, 512 - n, "[%d] %s\n", i, _wifi_prefs.networks[i].ssid);
+      snprintf(buf + n, 512 - n, "mode: %s  port: %u",
+               _wifi_prefs.ip_mode == IP_MODE_STATIC ? "static" : "dhcp",
+               (unsigned)(_wifi_prefs.tcp_port ? _wifi_prefs.tcp_port : WIFI_TCP_PORT_DEFAULT));
+    }
+
+  } else if (strcmp(cmd, "wifi scan") == 0) {
+    strcpy(buf, "Scanning...");
+    int n_found = WiFi.scanNetworks();
+    if (n_found <= 0) {
+      strcpy(buf, "No networks found.");
+    } else {
+      int n = 0;
+      for (int i = 0; i < n_found && n < 500; i++)
+        n += snprintf(buf + n, 512 - n, "%s (%d dBm)\n", WiFi.SSID(i).c_str(), WiFi.RSSI(i));
+      WiFi.scanDelete();
+    }
+
+  } else if (strncmp(cmd, "wifi add ", 9) == 0) {
+    char ssid[33] = {}, pass[65] = {};
+    if (sscanf(cmd + 9, "%32s %64s", ssid, pass) >= 1) {
+      if (_wifi_prefs.network_count >= WIFI_MAX_NETWORKS) {
+        strcpy(buf, "ERR: max 5 networks stored");
+      } else {
+        addWifiNetwork(ssid, pass);
+        snprintf(buf, 512, "wifi: saved [%s]", ssid);
+      }
+    } else {
+      strcpy(buf, "Usage: wifi add <ssid> <password>");
+    }
+
+  } else if (strncmp(cmd, "wifi del ", 9) == 0) {
+    const char* ssid = cmd + 9;
+    removeWifiNetwork(ssid);
+    snprintf(buf, 512, "wifi: removed [%s] (if existed)", ssid);
+
+  } else if (strcmp(cmd, "wifi ip dhcp") == 0) {
+    _wifi_prefs.ip_mode = IP_MODE_DHCP;
+    saveWifiPrefs();
+    strcpy(buf, "wifi ip: dhcp");
+
+  } else if (strncmp(cmd, "wifi ip static ", 15) == 0) {
+    char ip[16] = {}, gw[16] = {}, mask[16] = {};
+    if (sscanf(cmd + 15, "%15s %15s %15s", ip, gw, mask) == 3) {
+      _wifi_prefs.ip_mode = IP_MODE_STATIC;
+      strncpy(_wifi_prefs.static_ip,   ip,   sizeof(_wifi_prefs.static_ip) - 1);
+      strncpy(_wifi_prefs.static_gw,   gw,   sizeof(_wifi_prefs.static_gw) - 1);
+      strncpy(_wifi_prefs.static_mask, mask, sizeof(_wifi_prefs.static_mask) - 1);
+      saveWifiPrefs();
+      snprintf(buf, 512, "wifi ip: static %s gw %s mask %s", ip, gw, mask);
+    } else {
+      strcpy(buf, "Usage: wifi ip static <ip> <gateway> <mask>");
+    }
+
+  } else if (strncmp(cmd, "wifi port ", 10) == 0) {
+    int port = atoi(cmd + 10);
+    if (port > 0 && port < 65536) {
+      _wifi_prefs.tcp_port = (uint16_t)port;
+      saveWifiPrefs();
+      snprintf(buf, 512, "wifi port: %d", port);
+    } else {
+      strcpy(buf, "Usage: wifi port <1-65535>");
+    }
+
+  } else if (strncmp(cmd, "wifi connect ", 13) == 0) {
+    int idx = atoi(cmd + 13);
+    if (idx >= 0 && idx < _wifi_prefs.network_count) {
+      snprintf(buf, 512, "connecting to [%s]...", _wifi_prefs.networks[idx].ssid);
+      switchCommsMode(COMMS_MODE_WIFI, idx);
+    } else {
+      snprintf(buf, 512, "ERR: index %d out of range (0..%d)", idx, _wifi_prefs.network_count - 1);
+    }
+
+  } else if (strcmp(cmd, "wifi status") == 0) {
+    const char* mode_str = (_wifi_prefs.comms_mode == COMMS_MODE_WIFI) ? "WiFi"
+                         : (_wifi_prefs.comms_mode == COMMS_MODE_USB)  ? "USB" : "BLE";
+    if (_wifi_connecting) {
+      snprintf(buf, 512, "comms: %s (connecting...)", mode_str);
+    } else if (_wifi_prefs.comms_mode == COMMS_MODE_WIFI && WiFi.status() == WL_CONNECTED) {
+      snprintf(buf, 512, "comms: WiFi  ip: %s  port: %u",
+               WiFi.localIP().toString().c_str(),
+               (unsigned)(_wifi_prefs.tcp_port ? _wifi_prefs.tcp_port : WIFI_TCP_PORT_DEFAULT));
+    } else {
+      snprintf(buf, 512, "comms: %s", mode_str);
+    }
+#endif  // WITH_WIFI_SWITCHING
+
   } else {
     return false; // not a companion command — delegate to CommonCLI
   }
@@ -2548,3 +2646,133 @@ void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* c
 }
 
 #endif  // WITH_COMPANION_CLI
+
+#ifdef WITH_WIFI_SWITCHING
+
+void MyMesh::loadWifiPrefs() {
+  memset(&_wifi_prefs, 0, sizeof(_wifi_prefs));
+  _wifi_prefs.tcp_port = WIFI_TCP_PORT_DEFAULT;
+  File file = SPIFFS.open("/wifi_prefs", "r");
+  if (file) {
+    file.read((uint8_t*)&_wifi_prefs, min((size_t)file.size(), sizeof(_wifi_prefs)));
+    file.close();
+  }
+  if (_wifi_prefs.tcp_port == 0) _wifi_prefs.tcp_port = WIFI_TCP_PORT_DEFAULT;
+}
+
+void MyMesh::saveWifiPrefs() {
+  File file = SPIFFS.open("/wifi_prefs", "w");
+  if (file) {
+    file.write((uint8_t*)&_wifi_prefs, sizeof(_wifi_prefs));
+    file.close();
+  }
+}
+
+void MyMesh::addWifiNetwork(const char* ssid, const char* pass) {
+  // Update existing entry if SSID already stored
+  for (int i = 0; i < _wifi_prefs.network_count; i++) {
+    if (strcmp(_wifi_prefs.networks[i].ssid, ssid) == 0) {
+      strncpy(_wifi_prefs.networks[i].password, pass, sizeof(_wifi_prefs.networks[i].password) - 1);
+      saveWifiPrefs();
+      return;
+    }
+  }
+  if (_wifi_prefs.network_count >= WIFI_MAX_NETWORKS) return;  // full
+  int idx = _wifi_prefs.network_count++;
+  strncpy(_wifi_prefs.networks[idx].ssid,     ssid, sizeof(_wifi_prefs.networks[idx].ssid) - 1);
+  strncpy(_wifi_prefs.networks[idx].password, pass, sizeof(_wifi_prefs.networks[idx].password) - 1);
+  saveWifiPrefs();
+}
+
+void MyMesh::removeWifiNetwork(const char* ssid) {
+  for (int i = 0; i < _wifi_prefs.network_count; i++) {
+    if (strcmp(_wifi_prefs.networks[i].ssid, ssid) == 0) {
+      // Shift remaining entries left
+      for (int j = i; j < _wifi_prefs.network_count - 1; j++)
+        _wifi_prefs.networks[j] = _wifi_prefs.networks[j + 1];
+      memset(&_wifi_prefs.networks[--_wifi_prefs.network_count], 0, sizeof(WifiNetwork));
+      saveWifiPrefs();
+      return;
+    }
+  }
+}
+
+void MyMesh::switchCommsMode(uint8_t mode, int wifi_net_idx) {
+  if (_serial) _serial->disable();
+
+  _wifi_prefs.comms_mode = mode;
+  saveWifiPrefs();
+
+  if (mode == COMMS_MODE_WIFI && wifi_net_idx >= 0
+      && wifi_net_idx < _wifi_prefs.network_count) {
+    _wifi_net_idx = wifi_net_idx;
+    _wifi_connecting = true;
+    _wifi_connect_start = millis();
+    WiFi.begin(_wifi_prefs.networks[wifi_net_idx].ssid,
+               _wifi_prefs.networks[wifi_net_idx].password);
+    // Keep BLE active as fallback during connection attempt
+    _serial = &_ble_iface;
+    _serial->enable();
+  } else if (mode == COMMS_MODE_USB) {
+    WiFi.disconnect(true);
+    _serial = nullptr;  // USB is managed externally
+  } else {
+    // BLE (also used as fallback)
+    WiFi.disconnect(true);
+    _wifi_prefs.comms_mode = COMMS_MODE_BLE;
+    saveWifiPrefs();
+    _serial = &_ble_iface;
+    _serial->enable();
+  }
+}
+
+void MyMesh::checkWifiConnection() {
+  if (!_wifi_connecting) return;
+
+  if (WiFi.status() == WL_CONNECTED) {
+    _wifi_connecting = false;
+    if (_wifi_prefs.ip_mode == IP_MODE_STATIC) {
+      IPAddress ip, gw, mask;
+      ip.fromString(_wifi_prefs.static_ip);
+      gw.fromString(_wifi_prefs.static_gw);
+      mask.fromString(_wifi_prefs.static_mask);
+      WiFi.config(ip, gw, mask);
+    }
+    board.setInhibitSleep(true);
+    uint16_t port = _wifi_prefs.tcp_port ? _wifi_prefs.tcp_port : WIFI_TCP_PORT_DEFAULT;
+    if (_serial) _serial->disable();
+    _wifi_iface.begin(port);
+    _serial = &_wifi_iface;
+    _serial->enable();
+  } else if (millis() - _wifi_connect_start > 15000) {
+    // Timeout — revert to BLE
+    _wifi_connecting = false;
+    _wifi_prefs.comms_mode = COMMS_MODE_BLE;
+    saveWifiPrefs();
+    WiFi.disconnect(true);
+    // _serial already points to _ble_iface (set in switchCommsMode)
+  }
+}
+
+void MyMesh::initCommsFromPrefs() {
+  loadWifiPrefs();
+  if (_active_ble_pin == 0) {
+    StdRNG rng;
+    _active_ble_pin = rng.nextInt(100000, 999999);
+    _prefs.ble_pin = _active_ble_pin;
+  }
+  _ble_iface.begin(BLE_NAME_PREFIX, _prefs.node_name, _active_ble_pin);
+  if (_wifi_prefs.comms_mode == COMMS_MODE_WIFI && _wifi_prefs.network_count > 0) {
+    // Start async WiFi; use BLE as fallback during connection
+    _wifi_net_idx = 0;
+    _wifi_connecting = true;
+    _wifi_connect_start = millis();
+    WiFi.begin(_wifi_prefs.networks[0].ssid, _wifi_prefs.networks[0].password);
+    startInterface(_ble_iface);
+  } else {
+    // BLE or USB: start BLE as default
+    startInterface(_ble_iface);
+  }
+}
+
+#endif  // WITH_WIFI_SWITCHING

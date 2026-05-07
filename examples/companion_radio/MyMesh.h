@@ -30,6 +30,13 @@
 #include "DataStore.h"
 #include "NodePrefs.h"
 
+#ifdef WITH_WIFI_SWITCHING
+  #include "WifiPrefs.h"
+  #include <WiFi.h>
+  #include <helpers/esp32/SerialBLEInterface.h>
+  #include <helpers/esp32/SerialWifiInterface.h>
+#endif
+
 #include <RTClib.h>
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/BaseSerialInterface.h>
@@ -221,6 +228,20 @@ public:
   }
 #endif
 
+#ifdef WITH_WIFI_SWITCHING
+  void switchCommsMode(uint8_t mode, int wifi_net_idx = 0);
+  bool isWifiConnecting() const { return _wifi_connecting; }
+  bool isWifiConnected() const { return WiFi.status() == WL_CONNECTED; }
+  String getWifiIP() const { return WiFi.localIP().toString(); }
+  WifiPrefs* getWifiPrefs() { return &_wifi_prefs; }
+  void addWifiNetwork(const char* ssid, const char* pass);
+  void removeWifiNetwork(const char* ssid);
+  void saveWifiPrefs();
+  void loadWifiPrefs();
+  void checkWifiConnection();
+  void initCommsFromPrefs();
+#endif
+
 #if ENV_INCLUDE_GPS == 1
   void applyGpsPrefs() {
     sensors.setSettingValue("gps", _prefs.gps_enabled ? "1" : "0");
@@ -322,6 +343,15 @@ private:
   void sendCliReplyPM(const ContactInfo& to, const char* buf);
   void sendCliReplyChannel(uint8_t ch_idx, const char* buf);
   bool handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool is_remote);
+#endif
+
+#ifdef WITH_WIFI_SWITCHING
+  SerialBLEInterface  _ble_iface;
+  SerialWifiInterface _wifi_iface;
+  WifiPrefs           _wifi_prefs;
+  bool                _wifi_connecting = false;
+  uint32_t            _wifi_connect_start = 0;
+  int                 _wifi_net_idx = -1;
 #endif
 };
 

@@ -3,7 +3,7 @@
 #include "../MyMesh.h"
 #include "target.h"
 #include <time.h>
-#ifdef WIFI_SSID
+#if defined(WIFI_SSID) || defined(WITH_WIFI_SWITCHING)
   #include <WiFi.h>
 #endif
 
@@ -96,7 +96,9 @@ class HomeScreen : public UIScreen {
     CLOCK,     // eInk only: large clock + PM preview inline
     RECENT,
     RADIO,
+#ifndef WITH_WIFI_SWITCHING
     BLUETOOTH,
+#endif
     ADVERT,
 #if ENV_INCLUDE_GPS == 1
     GPS,
@@ -125,16 +127,33 @@ class HomeScreen : public UIScreen {
   unsigned long _pin_show_until = 0;
   int           _pm_clock_mode  = 1;   // 0=all msgs switch screen, 1=PM inline only
 
-#ifdef WITH_COMPANION_CLI
-  static const int SETTINGS_N        = 6;
-  static const int SETTINGS_PM_IDX   = 3;
-  static const int SETTINGS_DIM_IDX  = 4;
-  static const int SETTINGS_BACK_IDX = 5;
+#if defined(WITH_COMPANION_CLI) && defined(WITH_WIFI_SWITCHING)
+  static const int SETTINGS_N          = 7;
+  static const int SETTINGS_COMMS_IDX  = 3;
+  static const int SETTINGS_PM_IDX     = 4;
+  static const int SETTINGS_DIM_IDX    = 5;
+  static const int SETTINGS_BACK_IDX   = 6;
+#elif defined(WITH_COMPANION_CLI)
+  static const int SETTINGS_N          = 6;
+  static const int SETTINGS_PM_IDX     = 3;
+  static const int SETTINGS_DIM_IDX    = 4;
+  static const int SETTINGS_BACK_IDX   = 5;
 #else
-  static const int SETTINGS_N        = 3;
-  static const int SETTINGS_PM_IDX   = 0;
-  static const int SETTINGS_DIM_IDX  = 1;
-  static const int SETTINGS_BACK_IDX = 2;
+  static const int SETTINGS_N          = 3;
+  static const int SETTINGS_PM_IDX     = 0;
+  static const int SETTINGS_DIM_IDX    = 1;
+  static const int SETTINGS_BACK_IDX   = 2;
+#endif
+
+#ifdef WITH_WIFI_SWITCHING
+  bool _in_wifi_select  = false;
+  int  _wifi_sel        = 0;
+  bool _wifi_wait       = false;
+  bool _wifi_scanning   = false;
+  int  _wifi_scan_n     = -1;   // number of scan results, -1 = not done
+  int  _wifi_scan_scroll = 0;
+  bool _wifi_cmd_shown  = false;
+  char _wifi_cmd[72];           // full-screen command overlay text
 #endif
 
 
@@ -221,6 +240,14 @@ public:
     if (_pin_show_until && millis() >= _pin_show_until) {
       _pin_show_until = 0;  // render() will show **** on next cycle
     }
+#ifdef WITH_WIFI_SWITCHING
+    if (_in_wifi_select && _wifi_wait && !the_mesh.isWifiConnecting()) {
+      _in_wifi_select = false;
+      _wifi_wait      = false;
+      WiFi.scanDelete();
+      _wifi_scan_n    = -1;
+    }
+#endif
   }
 
   int render(DisplayDriver& display) override {
@@ -335,11 +362,28 @@ public:
         display.setColor(DisplayDriver::GREEN);
         display.setTextSize(hdr_size);
         display.drawTextCentered(display.width() / 2, content_y + 24, "< Connected >");
-      } else if (the_mesh.getBLEPin() != 0) { // BT pin
-        display.setColor(DisplayDriver::RED);
-        display.setTextSize(2);
-        sprintf(tmp, "Pin:%d", the_mesh.getBLEPin());
+#ifdef WITH_WIFI_SWITCHING
+      } else if (the_mesh.isWifiConnected()) {
+        String wip = the_mesh.getWifiIP();
+        snprintf(tmp, sizeof(tmp), "IP:%s", wip.c_str());
+        display.setColor(DisplayDriver::GREEN);
+        display.setTextSize(1);
         display.drawTextCentered(display.width() / 2, content_y + 24, tmp);
+      } else if (the_mesh.isWifiConnecting()) {
+        display.setColor(DisplayDriver::YELLOW);
+        display.setTextSize(1);
+        display.drawTextCentered(display.width() / 2, content_y + 24, "WiFi...");
+#endif
+      } else if (the_mesh.getBLEPin() != 0) {
+#ifdef WITH_WIFI_SWITCHING
+        if (the_mesh.getWifiPrefs()->comms_mode != COMMS_MODE_WIFI)
+#endif
+        {
+          display.setColor(DisplayDriver::RED);
+          display.setTextSize(2);
+          sprintf(tmp, "Pin:%d", the_mesh.getBLEPin());
+          display.drawTextCentered(display.width() / 2, content_y + 24, tmp);
+        }
       }
     } else if (_page == HomePage::CLOCK) {
       // --- Large clock display ---
@@ -430,6 +474,7 @@ public:
         snprintf(tmp, sizeof(tmp), "Noise floor: %d", radio_driver.getNoiseFloor());
         display.setCursor(0, y); display.print(tmp);
       }
+#ifndef WITH_WIFI_SWITCHING
     } else if (_page == HomePage::BLUETOOTH) {
       display.setColor(DisplayDriver::GREEN);
       display.drawXbm((display.width() - 32) / 2, content_y,
@@ -437,6 +482,7 @@ public:
           32, 32);
       display.setTextSize(hdr_size);
       display.drawTextCentered(display.width() / 2, display.height() - 8*hdr_size - 2, "toggle: " PRESS_LABEL);
+#endif
     } else if (_page == HomePage::ADVERT) {
       display.setColor(DisplayDriver::GREEN);
       display.drawXbm((display.width() - 32) / 2, content_y, advert_icon, 32, 32);
@@ -556,6 +602,109 @@ public:
 #endif
     } else if (_page == HomePage::SETTINGS) {
       display.setTextSize(hdr_size);
+#ifdef WITH_WIFI_SWITCHING
+      if (_in_wifi_select) {
+        const int LINE_H_W  = 8 * hdr_size + 2;
+        const int CURSOR_W  = 6 * hdr_size;
+        const int visible_w = (display.height() - content_y) / LINE_H_W;
+
+        // Command overlay: fills content area only (header stays visible)
+        if (_wifi_cmd_shown) {
+          display.setColor(DisplayDriver::YELLOW);
+          display.setTextSize(1);
+          display.setCursor(0, content_y);
+          display.printWordWrap(_wifi_cmd, display.width());
+          return 60000;
+        }
+
+        // Poll async scan completion
+        if (_wifi_scanning) {
+          int n = WiFi.scanComplete();
+          if (n >= 0) {
+            _wifi_scanning    = false;
+            _wifi_scan_n      = n;
+            _wifi_sel         = 0;
+            _wifi_scan_scroll = 0;
+          }
+        }
+
+        if (the_mesh.isWifiConnecting()) {
+          display.setColor(DisplayDriver::YELLOW);
+          display.drawTextCentered(display.width() / 2, content_y + 8, "Connecting...");
+        } else if (_wifi_scanning) {
+          display.setColor(DisplayDriver::YELLOW);
+          display.drawTextCentered(display.width() / 2, content_y + 8, "Scanning WiFi...");
+        } else {
+          int net_n = _wifi_scan_n >= 0 ? _wifi_scan_n : 0;
+          WifiPrefs* wp = the_mesh.getWifiPrefs();
+          int S = wp->network_count;
+
+          // Gather unsaved scanned SSID indices
+          int unsaved[20];
+          int N_u = 0;
+          for (int si = 0; si < net_n && N_u < 20; si++) {
+            String ss = WiFi.SSID(si);
+            bool found = false;
+            for (int k = 0; k < S; k++) {
+              if (ss == wp->networks[k].ssid) { found = true; break; }
+            }
+            if (!found) unsaved[N_u++] = si;
+          }
+
+          // RSSI for each saved network (-200 if not visible)
+          int saved_rssi[WIFI_MAX_NETWORKS];
+          for (int k = 0; k < S; k++) {
+            saved_rssi[k] = -200;
+            for (int si = 0; si < net_n; si++) {
+              if (WiFi.SSID(si) == wp->networks[k].ssid) { saved_rssi[k] = WiFi.RSSI(si); break; }
+            }
+          }
+
+          // Items: 0..S-1 = saved SSIDs, S..S+N_u-1 = unsaved scan, S+N_u = BLE, +1 = USB, +2 = Back
+          int total_n = S + N_u + 3;
+          int max_ssid = display.width() / (6 * hdr_size) - 5;
+          if (max_ssid < 4) max_ssid = 4;
+
+          display.setColor(DisplayDriver::LIGHT);
+          for (int vi = 0; vi < visible_w; vi++) {
+            int i = _wifi_scan_scroll + vi;
+            if (i >= total_n) break;
+            int y = content_y + vi * LINE_H_W;
+            display.setTextSize(hdr_size);
+            display.setCursor(0, y);
+            display.print(_wifi_sel == i ? ">" : " ");
+            display.setCursor(CURSOR_W, y);
+            if (i < S) {
+              display.print("*");
+              display.setCursor(CURSOR_W * 2, y);
+              char sbuf[33];
+              strncpy(sbuf, wp->networks[i].ssid, max_ssid);
+              sbuf[max_ssid] = '\0';
+              display.print(sbuf);
+              char rbuf[6];
+              if (saved_rssi[i] > -200) snprintf(rbuf, sizeof(rbuf), "%4d", saved_rssi[i]);
+              else                       strcpy(rbuf, " ---");
+              display.drawTextRightAlign(display.width() - 1, y, rbuf);
+            } else if (i < S + N_u) {
+              display.print(" ");
+              display.setCursor(CURSOR_W * 2, y);
+              int si = unsaved[i - S];
+              String ss = WiFi.SSID(si);
+              char sbuf[33];
+              strncpy(sbuf, ss.c_str(), max_ssid);
+              sbuf[max_ssid] = '\0';
+              display.print(sbuf);
+              char rbuf[6];
+              snprintf(rbuf, sizeof(rbuf), "%4d", WiFi.RSSI(si));
+              display.drawTextRightAlign(display.width() - 1, y, rbuf);
+            } else if (i == S + N_u)     { display.print("  BLE"); }
+            else if (i == S + N_u + 1)   { display.print("  USB"); }
+            else                          { display.print("  Back"); }
+          }
+        }
+        return (_wifi_scanning || the_mesh.isWifiConnecting()) ? 400 : 200;
+      } else
+#endif
       if (!_in_settings) {
         display.setColor(DisplayDriver::GREEN);
         display.drawTextCentered(display.width() / 2, content_y + 8, "Settings");
@@ -584,6 +733,10 @@ public:
           else if (i == 2) lbl = "Timesync";
           else
 #endif
+#ifdef WITH_WIFI_SWITCHING
+          if      (i == SETTINGS_COMMS_IDX) lbl = "Comms";
+          else
+#endif
           if      (i == SETTINGS_PM_IDX)   lbl = "PM CLOCK";
           else if (i == SETTINGS_DIM_IDX)  lbl = "CLOCK DIM";
           display.print(lbl);
@@ -598,6 +751,20 @@ public:
               snprintf(val, sizeof(val), "%s", show ? the_mesh.getCliPin() : "****");
             } else if (i == 2) {
               snprintf(val, sizeof(val), "%s", ts_vals[the_mesh.getTimesyncMode()]);
+            } else
+#endif
+#ifdef WITH_WIFI_SWITCHING
+            if (i == SETTINGS_COMMS_IDX) {
+              uint8_t mode = the_mesh.getWifiPrefs()->comms_mode;
+              if (mode == COMMS_MODE_WIFI) {
+                if (the_mesh.isWifiConnecting())     snprintf(val, sizeof(val), "WiFi ...");
+                else if (the_mesh.isWifiConnected()) snprintf(val, sizeof(val), "WiFi OK");
+                else                                 snprintf(val, sizeof(val), "WiFi");
+              } else if (mode == COMMS_MODE_USB) {
+                snprintf(val, sizeof(val), "USB");
+              } else {
+                snprintf(val, sizeof(val), "BLE");
+              }
             } else
 #endif
             if (i == SETTINGS_PM_IDX) {
@@ -642,6 +809,68 @@ public:
       }
     }
 
+#ifdef WITH_WIFI_SWITCHING
+    if (_page == HomePage::SETTINGS && _in_wifi_select) {
+      // Any key dismisses the full-screen command overlay
+      if (_wifi_cmd_shown) {
+        _wifi_cmd_shown = false;
+        return true;
+      }
+      if (_wifi_scanning) return true;  // absorb keys during scan
+      if (!the_mesh.isWifiConnecting()) {
+        int net_n = _wifi_scan_n >= 0 ? _wifi_scan_n : 0;
+        WifiPrefs* wp = the_mesh.getWifiPrefs();
+        int S = wp->network_count;
+        // Rebuild unsaved indices (same logic as render)
+        int unsaved[20];
+        int N_u = 0;
+        for (int si = 0; si < net_n && N_u < 20; si++) {
+          String ss = WiFi.SSID(si);
+          bool found = false;
+          for (int k = 0; k < S; k++) {
+            if (ss == wp->networks[k].ssid) { found = true; break; }
+          }
+          if (!found) unsaved[N_u++] = si;
+        }
+        int total_n = S + N_u + 3;
+
+        if (c == KEY_NEXT || c == KEY_RIGHT) {
+          _wifi_sel = (_wifi_sel + 1) % total_n;
+          if (_wifi_sel < _wifi_scan_scroll) _wifi_scan_scroll = _wifi_sel;
+          if (_wifi_sel >= _wifi_scan_scroll + 3) _wifi_scan_scroll = _wifi_sel - 2;
+        } else if (c == KEY_LEFT || c == KEY_PREV) {
+          WiFi.scanDelete(); _wifi_scan_n = -1;
+          _in_wifi_select = false;
+        } else if (c == KEY_ENTER) {
+          if (_wifi_sel < S) {
+            // saved SSID → connect
+            WiFi.scanDelete(); _wifi_scan_n = -1;
+            the_mesh.switchCommsMode(COMMS_MODE_WIFI, _wifi_sel);
+            _wifi_wait = true;
+          } else if (_wifi_sel < S + N_u) {
+            // unsaved scanned → show full-screen command overlay
+            int si = unsaved[_wifi_sel - S];
+            String ss = WiFi.SSID(si);
+            snprintf(_wifi_cmd, sizeof(_wifi_cmd),
+                     "wifi add\n%.32s\n<pass>", ss.c_str());
+            _wifi_cmd_shown = true;
+          } else if (_wifi_sel == S + N_u) {
+            WiFi.scanDelete(); _wifi_scan_n = -1;
+            the_mesh.switchCommsMode(COMMS_MODE_BLE);
+            _in_wifi_select = false;
+          } else if (_wifi_sel == S + N_u + 1) {
+            WiFi.scanDelete(); _wifi_scan_n = -1;
+            the_mesh.switchCommsMode(COMMS_MODE_USB);
+            _in_wifi_select = false;
+          } else {
+            WiFi.scanDelete(); _wifi_scan_n = -1;
+            _in_wifi_select = false;
+          }
+        }
+      }
+      return true;
+    }
+#endif
     // Settings edit mode absorbs all navigation before standard page switching
     if (_page == HomePage::SETTINGS && _in_settings) {
       if (c == KEY_LEFT || c == KEY_PREV) {
@@ -669,6 +898,18 @@ public:
         } else if (_settings_sel == 2) {
           the_mesh.setTimesyncMode((the_mesh.getTimesyncMode() + 1) % 3);
 #endif
+#ifdef WITH_WIFI_SWITCHING
+        } else if (_settings_sel == SETTINGS_COMMS_IDX) {
+          if (!_wifi_wait) {
+            _in_wifi_select   = true;
+            _wifi_sel         = 0;
+            _wifi_scan_scroll = 0;
+            _wifi_scanning    = true;
+            _wifi_scan_n      = -1;
+            WiFi.mode(WIFI_STA);
+            WiFi.scanNetworks(true);  // async
+          }
+#endif
         }
         return true;
       }
@@ -683,6 +924,7 @@ public:
       _page = (_page + 1) % HomePage::Count;
       return true;
     }
+#ifndef WITH_WIFI_SWITCHING
     if (c == KEY_ENTER && _page == HomePage::BLUETOOTH) {
       if (_task->isSerialEnabled()) {  // toggle Bluetooth on/off
         _task->disableSerial();
@@ -691,6 +933,7 @@ public:
       }
       return true;
     }
+#endif
     if (c == KEY_ENTER && _page == HomePage::ADVERT) {
       _task->notify(UIEventType::ack);
       if (the_mesh.advert()) {

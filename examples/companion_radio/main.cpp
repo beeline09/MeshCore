@@ -35,7 +35,11 @@ static uint32_t _atoi(const char* sp) {
 #endif
 
 #ifdef ESP32
-  #ifdef WIFI_SSID
+  #ifdef WITH_WIFI_SWITCHING
+    // Interfaces are owned by MyMesh; only a USB placeholder needed for UITask
+    #include <helpers/ArduinoSerialInterface.h>
+    ArduinoSerialInterface serial_interface;
+  #elif defined(WIFI_SSID)
     #include <helpers/esp32/SerialWifiInterface.h>
     SerialWifiInterface serial_interface;
     #ifndef TCP_PORT
@@ -193,20 +197,26 @@ void setup() {
     #endif
   );
 
-#ifdef WIFI_SSID
-  board.setInhibitSleep(true);   // prevent sleep when WiFi is active
+#ifdef WITH_WIFI_SWITCHING
+  serial_interface.begin(Serial);           // safe placeholder for UITask
+  the_mesh.initCommsFromPrefs();            // sets up actual BLE/WiFi interface
+#elif defined(WIFI_SSID)
+  board.setInhibitSleep(true);
   WiFi.begin(WIFI_SSID, WIFI_PWD);
   serial_interface.begin(TCP_PORT);
+  the_mesh.startInterface(serial_interface);
 #elif defined(BLE_PIN_CODE)
   serial_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
+  the_mesh.startInterface(serial_interface);
 #elif defined(SERIAL_RX)
   companion_serial.setPins(SERIAL_RX, SERIAL_TX);
   companion_serial.begin(115200);
   serial_interface.begin(companion_serial);
+  the_mesh.startInterface(serial_interface);
 #else
   serial_interface.begin(Serial);
-#endif
   the_mesh.startInterface(serial_interface);
+#endif
 #else
   #error "need to define filesystem"
 #endif
