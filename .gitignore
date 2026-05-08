@@ -18,3 +18,5 @@ compile_commands.json
 venv/
 platformio.local.ini
 .claude/
+watch-hotfix.bat
+watch-hotfix.ps1
