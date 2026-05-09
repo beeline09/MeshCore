@@ -86,8 +86,7 @@ jobs:
           files: out/*
 
       - name: Append to existing release
-        uses: softprops/action-gh-release@v2
         if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
-        with:
-          tag_name: ${{ inputs.release_tag }}
-          files: out/*
+        run: gh release upload "${{ inputs.release_tag }}" out/* --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
