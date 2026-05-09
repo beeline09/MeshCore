@@ -14,6 +14,10 @@ on:
         description: 'Companion tag for version string, e.g. companion-v1.15.0b9 (empty = latest companion-* tag)'
         required: false
         default: ''
+      release_tag:
+        description: 'Append built artifacts to this existing release tag, e.g. companion-v1.15.0b9 (empty = no upload)'
+        required: false
+        default: ''
   push:
     tags:
       - 'companion-*'
@@ -79,4 +83,11 @@ jobs:
           name: Companion Firmware ${{ env.GIT_TAG_VERSION }}
           body_path: release_body.txt
           draft: true
+          files: out/*
+
+      - name: Append to existing release
+        uses: softprops/action-gh-release@v2
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        with:
+          tag_name: ${{ inputs.release_tag }}
           files: out/*
