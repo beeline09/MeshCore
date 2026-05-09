@@ -885,6 +885,7 @@ bool BaseChatMesh::setChannel(int idx, const ChannelDetails& src) {
     } else {
       mesh::Utils::sha256(channels[idx].channel.hash, sizeof(channels[idx].channel.hash), src.channel.secret, 32);  // 256-bit key
     }
+    if (idx >= num_channels) num_channels = idx + 1;
     return true;
   }
   return false;

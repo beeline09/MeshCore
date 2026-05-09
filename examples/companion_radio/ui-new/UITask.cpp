@@ -388,7 +388,7 @@ public:
     } else if (_page == HomePage::CLOCK) {
       // --- Large clock display ---
       _clock_pm_pending = 0;
-      time_t now = time(nullptr);
+      time_t now = (time_t)_rtc->getCurrentTime();
       struct tm timeinfo;
       localtime_r(&now, &timeinfo);
       char timeBuf[6];
