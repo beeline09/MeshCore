@@ -41,11 +41,9 @@ Write-Host ""
 $pioConfigJson = (pio project config --json-output 2>$null) -join "`n"
 
 function Get-EnvPlatform([string]$EnvName) {
-    # Try pio json config first
-    if ($pioConfigJson) {
-        $data = $null
-        try {
-            $data = $pioConfigJson | python3 -c @"
+    $data = $null
+    try {
+        $data = $pioConfigJson | python3 -c @"
 import sys, json, re
 data = json.load(sys.stdin)
 for section, options in data:
@@ -58,21 +56,8 @@ for section, options in data:
                         print(m.group(1))
                         sys.exit(0)
 "@
-        } catch { }
-        if ($data) { return $data.Trim() }
-    }
-    # Fallback: find the variant ini containing the env, check its extends chain
-    $iniFiles = Get-ChildItem -Path 'variants' -Filter 'platformio.ini' -Recurse
-    foreach ($f in $iniFiles) {
-        $content = Get-Content $f.FullName -Raw -ErrorAction SilentlyContinue
-        if ($content -match "\[env:$([regex]::Escape($EnvName))\]") {
-            if ($content -match 'extends\s*=\s*esp32_base')  { return 'ESP32_PLATFORM' }
-            if ($content -match 'extends\s*=\s*nrf52_base')  { return 'NRF52_PLATFORM' }
-            if ($content -match 'extends\s*=\s*stm32_base')  { return 'STM32_PLATFORM' }
-            if ($content -match 'extends\s*=\s*rp2040_base') { return 'RP2040_PLATFORM' }
-        }
-    }
-    return ''
+    } catch { }
+    return if ($data) { $data.Trim() } else { '' }
 }
 
 function Normalize-Envs([string[]]$RawEnvs) {
