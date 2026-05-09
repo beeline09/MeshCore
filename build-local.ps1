@@ -2,9 +2,9 @@
 # build-local.ps1 - build specified PlatformIO envs and collect firmware artifacts.
 #
 # Usage:
-#   .\build-local.ps1 Heltec_E213_companion_radio_ble
-#   .\build-local.ps1 Heltec_E213_companion_radio_ble, Heltec_E290_companion_ble, LilyGo_T-Echo_companion_radio_ble
-#   .\build-local.ps1 -Envs Heltec_E213_companion_radio_ble -DisableDebug
+#   .\build-local.ps1 Heltec_E213_companion_radio_uni
+#   .\build-local.ps1 Heltec_E213_companion_radio_uni, Heltec_E290_companion_radio_uni, Heltec_v3_companion_radio_uni
+#   .\build-local.ps1 -Envs Heltec_v3_companion_radio_uni -DisableDebug
 #
 # Output files land in out\ with names matching the GitHub Action convention:
 #   <env>-<version>-<hash>.bin          (update binary)
