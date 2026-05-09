@@ -222,7 +222,6 @@ build_companion_firmwares() {
   # build all companion firmwares
   # uni variants replace ble/usb/wifi for platforms that support WITH_WIFI_SWITCHING
   build_all_firmwares_by_suffix "_companion_radio_uni"
-  build_all_firmwares_by_suffix "_companion_uni"
   # legacy ble/usb for platforms without uni
 #  build_all_firmwares_by_suffix "_companion_radio_usb"
 #  build_all_firmwares_by_suffix "_companion_radio_ble"
