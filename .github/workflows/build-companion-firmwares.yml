@@ -5,6 +5,15 @@ permissions:
 
 on:
   workflow_dispatch:
+    inputs:
+      envs:
+        description: 'Space-separated envs to build (empty = all companion_radio_uni)'
+        required: false
+        default: ''
+      version_tag:
+        description: 'Companion tag for version string, e.g. companion-v1.15.0b9 (empty = latest companion-* tag)'
+        required: false
+        default: ''
   push:
     tags:
       - 'companion-*'
@@ -17,24 +26,40 @@ jobs:
 
       - name: Clone Repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Build Environment
         uses: ./.github/actions/setup-build-environment
+
+      - name: Resolve version for manual dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [ -n "${{ inputs.version_tag }}" ]; then
+            TAG="${{ inputs.version_tag }}"
+          else
+            TAG=$(git describe --tags --abbrev=0 --match 'companion-*' 2>/dev/null || echo "companion-v0.0.0")
+          fi
+          echo "GIT_TAG_VERSION=${TAG##*-}" >> $GITHUB_ENV
 
       - name: Build Firmwares
         env:
           FIRMWARE_VERSION: ${{ env.GIT_TAG_VERSION }}
         run: |
-          SPEC=""
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            TAG_BODY="${GITHUB_REF#refs/tags/companion-}"
-            CANDIDATE="${TAG_BODY%-v*}"
-            [[ "$CANDIDATE" != "$TAG_BODY" && -n "$CANDIDATE" ]] && SPEC="$CANDIDATE"
-          fi
-          if [ -n "$SPEC" ]; then
-            /usr/bin/env bash build.sh build-matching-firmwares "${SPEC}_companion"
+          if [ -n "${{ inputs.envs }}" ]; then
+            /usr/bin/env bash build.sh build-firmware ${{ inputs.envs }}
           else
-            /usr/bin/env bash build.sh build-companion-firmwares
+            SPEC=""
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+              TAG_BODY="${GITHUB_REF#refs/tags/companion-}"
+              CANDIDATE="${TAG_BODY%-v*}"
+              [[ "$CANDIDATE" != "$TAG_BODY" && -n "$CANDIDATE" ]] && SPEC="$CANDIDATE"
+            fi
+            if [ -n "$SPEC" ]; then
+              /usr/bin/env bash build.sh build-matching-firmwares "${SPEC}_companion"
+            else
+              /usr/bin/env bash build.sh build-companion-firmwares
+            fi
           fi
 
       - name: Upload Workflow Artifacts
