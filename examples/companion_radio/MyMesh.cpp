@@ -138,6 +138,68 @@
 // Auto-add config bitmask
 // Bit 0: If set, overwrite oldest non-favourite contact when contacts file is full
 // Bits 1-4: these indicate which contact types to auto-add when manual_contact_mode = 0x01
+
+namespace {
+
+bool mapCyrToLatUtf8(uint8_t b0, uint8_t b1, char& out) {
+  if (b0 == 0xD0) {
+    switch (b1) {
+      case 0x81: out = 'E'; return true; // Ё
+      case 0x90: out = 'A'; return true; // А
+      case 0x92: out = 'B'; return true; // В
+      case 0x95: out = 'E'; return true; // Е
+      case 0x97: out = '3'; return true; // З
+      case 0x9A: out = 'K'; return true; // К
+      case 0x9C: out = 'M'; return true; // М
+      case 0x9D: out = 'H'; return true; // Н
+      case 0x9E: out = 'O'; return true; // О
+      case 0xA0: out = 'P'; return true; // Р
+      case 0xA1: out = 'C'; return true; // С
+      case 0xA2: out = 'T'; return true; // Т
+      case 0xA5: out = 'X'; return true; // Х
+      case 0xAC: out = 'b'; return true; // Ь
+      case 0xB0: out = 'a'; return true; // а
+      case 0xB5: out = 'e'; return true; // е
+      case 0xBE: out = 'o'; return true; // о
+      default: break;
+    }
+  } else if (b0 == 0xD1) {
+    switch (b1) {
+      case 0x80: out = 'p'; return true; // р
+      case 0x81: out = 'c'; return true; // с
+      case 0x83: out = 'y'; return true; // у
+      case 0x85: out = 'x'; return true; // х
+      case 0x91: out = 'e'; return true; // ё
+      default: break;
+    }
+  }
+  return false;
+}
+
+int transliterateChannelText(const char* src, int src_len, char* dest, int dest_size) {
+  if (dest_size <= 0) return 0;
+
+  int di = 0;
+  for (int si = 0; si < src_len && di < dest_size - 1; ) {
+    uint8_t b0 = (uint8_t)src[si];
+    char mapped;
+    if (si + 1 < src_len && mapCyrToLatUtf8(b0, (uint8_t)src[si + 1], mapped)) {
+      dest[di++] = mapped;
+      si += 2;
+    } else {
+      dest[di++] = src[si++];
+    }
+  }
+
+  dest[di] = '\0';
+  return di;
+}
+
+bool textDiffers(const char* a, int a_len, const char* b, int b_len) {
+  return a_len != b_len || memcmp(a, b, a_len) != 0;
+}
+
+}
 #define AUTO_ADD_OVERWRITE_OLDEST (1 << 0)  // 0x01 - overwrite oldest non-favourite when full
 #define AUTO_ADD_CHAT             (1 << 1)  // 0x02 - auto-add Chat (Companion) (ADV_TYPE_CHAT)
 #define AUTO_ADD_REPEATER         (1 << 2)  // 0x04 - auto-add Repeater (ADV_TYPE_REPEATER)
@@ -284,13 +346,23 @@ uint8_t MyMesh::getExtraAckTransmitCount() const {
 }
 
 void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
-  if (_serial->isConnected() && len + 3 <= MAX_FRAME_SIZE) {
+  const uint8_t* log_raw = raw;
+  int log_len = len;
+#ifdef WITH_COMPANION_CLI
+  uint8_t mapped[MAX_TRANS_UNIT];
+  int mapped_len = mapCyr2LatChannelRawLog(raw, len, mapped, sizeof(mapped));
+  if (mapped_len > 0) {
+    log_raw = mapped;
+    log_len = mapped_len;
+  }
+#endif
+  if (_serial->isConnected() && log_len + 3 <= MAX_FRAME_SIZE) {
     int i = 0;
     out_frame[i++] = PUSH_CODE_LOG_RX_DATA;
     out_frame[i++] = (int8_t)(snr * 4);
     out_frame[i++] = (int8_t)(rssi);
-    memcpy(&out_frame[i], raw, len);
-    i += len;
+    memcpy(&out_frame[i], log_raw, log_len);
+    i += log_len;
 
     _serial->writeFrame(out_frame, i);
   }
@@ -992,6 +1064,10 @@ void MyMesh::begin(bool has_display) {
   _prefs.tx_power_dbm = constrain(_prefs.tx_power_dbm, -9, MAX_LORA_TX_POWER);
   _prefs.gps_enabled = constrain(_prefs.gps_enabled, 0, 1);  // Ensure boolean 0 or 1
   _prefs.gps_interval = constrain(_prefs.gps_interval, 0, 86400);  // Max 24 hours
+  _prefs.cyr2lat_channels = constrain(_prefs.cyr2lat_channels, 0, 1);
+  _prefs.cyr2lat_contacts = constrain(_prefs.cyr2lat_contacts, 0, 1);
+  _cyr2lat_channels_enabled = _prefs.cyr2lat_channels != 0;
+  _cyr2lat_contacts_enabled = _prefs.cyr2lat_contacts != 0;
 
 #ifdef BLE_PIN_CODE // 123456 by default
   if (_prefs.ble_pin == 0) {
@@ -1178,7 +1254,15 @@ void MyMesh::handleCmdFrame(size_t len) {
         result = sendCommandData(*recipient, msg_timestamp, attempt, text, est_timeout);
         expected_ack = 0; // no Ack expected
       } else {
-        result = sendMessage(*recipient, msg_timestamp, attempt, text, expected_ack, est_timeout);
+        const char* send_text = text;
+#ifdef WITH_COMPANION_CLI
+        char text_buf[MAX_FRAME_SIZE + 1];
+        if (_cyr2lat_contacts_enabled) {
+          transliterateChannelText(text, tlen, text_buf, sizeof(text_buf));
+          send_text = text_buf;
+        }
+#endif
+        result = sendMessage(*recipient, msg_timestamp, attempt, send_text, expected_ack, est_timeout);
       }
       // TODO: add expected ACK to table
       if (result == MSG_SEND_FAILED) {
@@ -1222,8 +1306,35 @@ void MyMesh::handleCmdFrame(size_t len) {
         handleTerminalCLI(channel_idx, msg_timestamp, text);
       } else
 #endif
-      if (success && sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, text, len - i)) {
-        writeOKFrame();
+      if (success) {
+        const char* send_text = text;
+        int send_len = len - i;
+        int orig_len = send_len;
+        char text_buf[MAX_FRAME_SIZE + 1];
+        bool transformed = false;
+
+#ifdef WITH_COMPANION_CLI
+        if (_cyr2lat_channels_enabled) {
+          send_len = transliterateChannelText(text, send_len, text_buf, sizeof(text_buf));
+          send_text = text_buf;
+          transformed = textDiffers(text, orig_len, send_text, send_len);
+        }
+#endif
+        int prefix_len = strlen(_prefs.node_name) + 2; // "<sender>: "
+        if (send_len + prefix_len > MAX_TEXT_LEN) {
+          send_len = MAX_TEXT_LEN - prefix_len;
+          if (send_len < 0) send_len = 0;
+        }
+#ifdef WITH_COMPANION_CLI
+        if (sendGroupMessageWithCyr2LatMap(msg_timestamp, channel.channel, _prefs.node_name, send_text, send_len,
+                                           text, orig_len, transformed)) {
+#else
+        if (sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, send_text, send_len)) {
+#endif
+          writeOKFrame();
+        } else {
+          writeErrFrame(ERR_CODE_NOT_FOUND);
+        }
       } else {
         writeErrFrame(ERR_CODE_NOT_FOUND); // bad channel_idx
       }
@@ -2400,6 +2511,90 @@ void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf) {
   }
 }
 
+bool MyMesh::sendGroupMessageWithCyr2LatMap(uint32_t timestamp, mesh::GroupChannel& channel, const char* sender_name,
+                                            const char* text, int text_len, const char* original_text,
+                                            int original_len, bool record_map) {
+  uint8_t temp[5 + MAX_TEXT_LEN + 32];
+  memcpy(temp, &timestamp, 4);
+  temp[4] = 0;  // TXT_TYPE_PLAIN
+
+  sprintf((char *)&temp[5], "%s: ", sender_name);
+  char* ep = strchr((char *)&temp[5], 0);
+  int prefix_len = ep - (char *)&temp[5];
+
+  if (text_len + prefix_len > MAX_TEXT_LEN) text_len = MAX_TEXT_LEN - prefix_len;
+  memcpy(ep, text, text_len);
+  ep[text_len] = 0;
+
+  auto pkt = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel, temp, 5 + prefix_len + text_len);
+  if (!pkt) return false;
+
+  if (record_map) {
+    Cyr2LatChannelMap& map = _cyr2lat_channel_maps[_next_cyr2lat_channel_map];
+    _next_cyr2lat_channel_map = (_next_cyr2lat_channel_map + 1) % CYR2LAT_CHANNEL_MAP_SIZE;
+
+    pkt->calculatePacketHash(map.transformed_hash);
+
+    uint8_t original[5 + MAX_TEXT_LEN + 32];
+    memcpy(original, &timestamp, 4);
+    original[4] = 0;
+    sprintf((char *)&original[5], "%s: ", sender_name);
+    char* original_ep = strchr((char *)&original[5], 0);
+    int original_prefix_len = original_ep - (char *)&original[5];
+    if (original_len + original_prefix_len > MAX_TEXT_LEN) {
+      original_len = MAX_TEXT_LEN - original_prefix_len;
+      if (original_len < 0) original_len = 0;
+    }
+    memcpy(original_ep, original_text, original_len);
+    original_ep[original_len] = 0;
+
+    int payload_len = 0;
+    memcpy(&map.original_payload[payload_len], channel.hash, PATH_HASH_SIZE);
+    payload_len += PATH_HASH_SIZE;
+    payload_len += mesh::Utils::encryptThenMAC(channel.secret, &map.original_payload[payload_len],
+                                               original, 5 + original_prefix_len + original_len);
+    map.original_payload_len = payload_len;
+  }
+
+  TransportKey default_scope;
+  memcpy(&default_scope.key, _prefs.default_scope_key, sizeof(default_scope.key));
+  auto scope = send_scope.isNull() ? &default_scope : &send_scope;
+
+  pkt->header &= ~PH_ROUTE_MASK;
+  if (scope->isNull()) {
+    pkt->header |= ROUTE_TYPE_FLOOD;
+  } else {
+    pkt->header |= ROUTE_TYPE_TRANSPORT_FLOOD;
+    pkt->transport_codes[0] = scope->calcTransportCode(pkt);
+    pkt->transport_codes[1] = 0;
+  }
+  pkt->setPathHashSizeAndCount(_prefs.path_hash_mode + 1, 0);
+
+  getTables()->hasSeen(pkt);
+  sendPacket(pkt, 1);
+  return true;
+}
+
+int MyMesh::mapCyr2LatChannelRawLog(const uint8_t* raw, int len, uint8_t* mapped, int mapped_size) {
+  if (len < 2) return 0;
+
+  mesh::Packet pkt;
+  if (!pkt.readFrom(raw, len) || pkt.getPayloadType() != PAYLOAD_TYPE_GRP_TXT) return 0;
+
+  uint8_t hash[MAX_HASH_SIZE];
+  pkt.calculatePacketHash(hash);
+  for (int i = 0; i < CYR2LAT_CHANNEL_MAP_SIZE; i++) {
+    Cyr2LatChannelMap& map = _cyr2lat_channel_maps[i];
+    if (map.original_payload_len == 0 || memcmp(hash, map.transformed_hash, MAX_HASH_SIZE) != 0) continue;
+
+    pkt.payload_len = map.original_payload_len;
+    memcpy(pkt.payload, map.original_payload, map.original_payload_len);
+    if (pkt.getRawLength() > mapped_size) return 0;
+    return pkt.writeTo(mapped);
+  }
+  return 0;
+}
+
 bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool is_remote) {
   if (strcmp(cmd, "pin") == 0) {
     snprintf(buf, 512, "CLI PIN: %s", _cli_pin);
@@ -2486,6 +2681,30 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
     if (found) saveChannels();
     _terminal_cli_enabled = false;
     strcpy(buf, found ? "terminal.cli: off (channel removed)" : "terminal.cli: off");
+  } else if (strcmp(cmd, "get cyr2lat.channels") == 0) {
+    snprintf(buf, 512, "cyr2lat.channels: %s", _cyr2lat_channels_enabled ? "on" : "off");
+  } else if (strcmp(cmd, "set cyr2lat.channels on") == 0) {
+    _cyr2lat_channels_enabled = true;
+    _prefs.cyr2lat_channels = 1;
+    savePrefs();
+    strcpy(buf, "cyr2lat.channels: on");
+  } else if (strcmp(cmd, "set cyr2lat.channels off") == 0) {
+    _cyr2lat_channels_enabled = false;
+    _prefs.cyr2lat_channels = 0;
+    savePrefs();
+    strcpy(buf, "cyr2lat.channels: off");
+  } else if (strcmp(cmd, "get cyr2lat.contacts") == 0) {
+    snprintf(buf, 512, "cyr2lat.contacts: %s", _cyr2lat_contacts_enabled ? "on" : "off");
+  } else if (strcmp(cmd, "set cyr2lat.contacts on") == 0) {
+    _cyr2lat_contacts_enabled = true;
+    _prefs.cyr2lat_contacts = 1;
+    savePrefs();
+    strcpy(buf, "cyr2lat.contacts: on");
+  } else if (strcmp(cmd, "set cyr2lat.contacts off") == 0) {
+    _cyr2lat_contacts_enabled = false;
+    _prefs.cyr2lat_contacts = 0;
+    savePrefs();
+    strcpy(buf, "cyr2lat.contacts: off");
 
 #ifdef WITH_WIFI_SWITCHING
   } else if (strcmp(cmd, "wifi list") == 0) {
