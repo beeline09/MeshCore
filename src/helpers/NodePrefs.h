@@ -69,4 +69,6 @@ struct NodePrefs {
   uint8_t  autoadd_max_hops;
   char     default_scope_name[31];
   uint8_t  default_scope_key[16];
+  uint8_t  cyr2lat_channels;
+  uint8_t  cyr2lat_contacts;
 };

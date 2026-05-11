@@ -328,6 +328,15 @@ private:
   AdvertPath advert_paths[ADVERT_PATH_TABLE_SIZE]; // circular table
 
 #ifdef WITH_COMPANION_CLI
+  struct Cyr2LatChannelMap {
+    uint8_t transformed_hash[MAX_HASH_SIZE];
+    uint16_t original_payload_len;
+    uint8_t original_payload[MAX_PACKET_PAYLOAD];
+  };
+  #define CYR2LAT_CHANNEL_MAP_SIZE 4
+  Cyr2LatChannelMap      _cyr2lat_channel_maps[CYR2LAT_CHANNEL_MAP_SIZE] = {};
+  int                    _next_cyr2lat_channel_map = 0;
+
   CommonCLI*             _cli = nullptr;
   CompanionCLICallbacks* _cli_cb = nullptr;
   char                   _cli_pin[9];
@@ -335,6 +344,8 @@ private:
   unsigned long          _pending_poweroff_at = 0;
   bool                   _remote_cli_enabled = true;
   bool                   _terminal_cli_enabled = true;
+  bool                   _cyr2lat_channels_enabled = false;
+  bool                   _cyr2lat_contacts_enabled = false;
   bool                   _ts_from_adverts = true;
   bool                   _ts_from_messages = true;
 
@@ -342,6 +353,10 @@ private:
   void handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* cmd);
   void sendCliReplyPM(const ContactInfo& to, const char* buf);
   void sendCliReplyChannel(uint8_t ch_idx, const char* buf);
+  bool sendGroupMessageWithCyr2LatMap(uint32_t timestamp, mesh::GroupChannel& channel, const char* sender_name,
+                                      const char* text, int text_len, const char* original_text,
+                                      int original_len, bool record_map);
+  int mapCyr2LatChannelRawLog(const uint8_t* raw, int len, uint8_t* mapped, int mapped_size);
   bool handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool is_remote);
 #endif
 
