@@ -205,22 +205,48 @@ build_repeater_firmwares() {
 
 }
 
+build_companion_non_wifi_firmwares() {
+  shopt -s nocasematch
+  local all_envs=($(get_pio_envs))
+  local uni_bases=()
+
+  for env in "${all_envs[@]}"; do
+    if [[ "$env" == *_companion_radio_uni ]]; then
+      uni_bases+=("${env%_companion_radio_uni}")
+    fi
+  done
+
+  for env in "${all_envs[@]}"; do
+    local base=""
+    if [[ "$env" == *_companion_radio_ble ]]; then
+      base="${env%_companion_radio_ble}"
+    elif [[ "$env" == *_companion_radio_usb ]]; then
+      base="${env%_companion_radio_usb}"
+    else
+      continue
+    fi
+
+    local skip=false
+    for uni_base in "${uni_bases[@]}"; do
+      if [[ "$base" == "$uni_base" ]]; then
+        skip=true
+        break
+      fi
+    done
+
+    if ! $skip; then
+      build_firmware "$env"
+    fi
+  done
+}
+
 build_companion_firmwares() {
 
-#  # build specific companion firmwares
-#  build_firmware "Heltec_v2_companion_radio_usb"
-#  build_firmware "Heltec_v2_companion_radio_ble"
-#  build_firmware "Heltec_v3_companion_radio_usb"
-#  build_firmware "Heltec_v3_companion_radio_ble"
-#  build_firmware "Xiao_S3_WIO_companion_radio_ble"
-#  build_firmware "LilyGo_T3S3_sx1262_companion_radio_usb"
-#  build_firmware "LilyGo_T3S3_sx1262_companion_radio_ble"
-#  build_firmware "RAK_4631_companion_radio_usb"
-#  build_firmware "RAK_4631_companion_radio_ble"
-#  build_firmware "t1000e_companion_radio_ble"
-
-  # build all companion firmwares
+  # ESP32 with WiFi switching
   build_all_firmwares_by_suffix "_companion_radio_uni"
+
+  # NRF52 / RP2040 / STM32 — devices without _uni
+  build_companion_non_wifi_firmwares
 
 }
 
