@@ -11,8 +11,15 @@ class ST7789Display : public DisplayDriver {
   bool _isOn;
   uint16_t _color;
   int _x=0, _y=0;
+  int _logical_x=0, _logical_y=0;
+  uint8_t _text_scale = 1;
+  bool _use_v3_clock_font = false;
 
   bool i2c_probe(TwoWire& wire, uint8_t addr);
+  void drawScaledString(int x, int y, const char* str);
+  uint16_t getScaledTextWidth(const char* str) const;
+  void drawV3ClockString(int x, int y, const char* str);
+  uint16_t getV3ClockTextWidth(const char* str) const;
 public:
 #ifdef HELTEC_VISION_MASTER_T190
   ST7789Display() : DisplayDriver(128, 64), display(&SPI, PIN_TFT_RST, PIN_TFT_DC, PIN_TFT_CS, GEOMETRY_RAWMODE, 320, 170,PIN_TFT_SDA,-1,PIN_TFT_SCL) {_isOn = false;}
@@ -22,6 +29,7 @@ public:
   bool begin();
 
   bool isOn() override { return _isOn; }
+  bool isColorTFT() const override { return true; }
   void turnOn() override;
   void turnOff() override;
   void clear() override;
@@ -35,5 +43,6 @@ public:
   void drawRect(int x, int y, int w, int h) override;
   void drawXbm(int x, int y, const uint8_t* bits, int w, int h) override;
   uint16_t getTextWidth(const char* str) override;
+  void drawTextCentered(int mid_x, int y, const char* str) override;
   void endFrame() override;
 };

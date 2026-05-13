@@ -227,7 +227,11 @@ class HomeScreen : public UIScreen {
 public:
   HomeScreen(UITask* task, mesh::RTCClock* rtc, SensorManager* sensors, NodePrefs* node_prefs)
      : _task(task), _rtc(rtc), _sensors(sensors), _node_prefs(node_prefs), _page(0),
-       _shutdown_init(false), _clock_pm_pending(0), sensors_lpp(200) {  }
+       _shutdown_init(false), _clock_pm_pending(0), sensors_lpp(200) {
+    if (_node_prefs != nullptr) {
+      _pm_clock_mode = constrain(_node_prefs->ui_pm_clock_mode, 0, 1);
+    }
+  }
 
   bool isOnClockPage() const { return _page == CLOCK; }
   void incrementClockPM() { _clock_pm_pending++; }
@@ -414,6 +418,17 @@ public:
         display.setTextSize(1);
         display.drawTextCentered(display.width() / 2, display.height() - 20, dateBuf);
         display.drawTextCentered(display.width() / 2, display.height() - 10, sourceBuf);
+      } else if (_task->isColorTFTDisplay()) {
+        char dateBuf[12];
+        strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
+        // T114 TFT is 240x135. OLED V3 clock is 24/64 = 37.5% screen height;
+        // ST7789 size 3 renders the same 6x8 bitmap clock scaled to TFT pixels.
+        display.setTextSize(3);
+        display.drawTextCentered(display.width() / 2, content_y, timeBuf);
+        display.setTextSize(2);
+        display.drawTextCentered(display.width() / 2, display.height() - 18, dateBuf);
+        display.setTextSize(1);
+        display.drawTextCentered(display.width() / 2, display.height() - 6, sourceBuf);
       } else {
         // OLED 128x64: size 3 (18px wide per char, 24px tall) fits "HH:MM" in 90px
         display.setTextSize(3);
@@ -888,8 +903,11 @@ public:
           _in_settings = false;
         } else if (_settings_sel == SETTINGS_PM_IDX) {
           _pm_clock_mode = (_pm_clock_mode + 1) % 2;
+          _node_prefs->ui_pm_clock_mode = _pm_clock_mode;
+          the_mesh.savePrefs();
         } else if (_settings_sel == SETTINGS_DIM_IDX) {
           _task->setClockDimMode((_task->getClockDimMode() + 1) % 2);
+          the_mesh.savePrefs();
 #ifdef WITH_COMPANION_CLI
         } else if (_settings_sel == 0) {
           the_mesh.setChatMode((the_mesh.getChatMode() + 1) % 4);
@@ -1179,6 +1197,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
 
   _node_prefs = node_prefs;
+  if (_node_prefs != NULL) {
+    setClockDimMode(_node_prefs->ui_clock_dim_mode);
+  }
 
   if (_display != NULL) {
     _display->turnOn();
@@ -1200,6 +1221,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   home = new HomeScreen(this, &rtc_clock, sensors, node_prefs);
   msg_preview = new MsgPreviewScreen(this, &rtc_clock);
   setCurrScreen(splash);
+}
+
+void UITask::setClockDimMode(int m) {
+  _clock_dim_mode = constrain(m, 0, 1);
+  if (_node_prefs != NULL) {
+    _node_prefs->ui_clock_dim_mode = _clock_dim_mode;
+  }
 }
 
 void UITask::showAlert(const char* text, int duration_millis) {

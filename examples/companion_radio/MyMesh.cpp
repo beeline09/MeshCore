@@ -985,6 +985,8 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _prefs.tx_power_dbm = LORA_TX_POWER;
   _prefs.gps_enabled = 0;       // GPS disabled by default
   _prefs.gps_interval = 0;      // No automatic GPS updates by default
+  _prefs.ui_pm_clock_mode = 1;  // PM inline on clock page by default
+  _prefs.ui_clock_dim_mode = 0; // normal auto-off by default
   //_prefs.rx_delay_base = 10.0f;  enable once new algo fixed
 #if defined(USE_SX1262) || defined(USE_SX1268)
 #ifdef SX126X_RX_BOOSTED_GAIN
@@ -1066,6 +1068,8 @@ void MyMesh::begin(bool has_display) {
   _prefs.gps_interval = constrain(_prefs.gps_interval, 0, 86400);  // Max 24 hours
   _prefs.cyr2lat_channels = constrain(_prefs.cyr2lat_channels, 0, 1);
   _prefs.cyr2lat_contacts = constrain(_prefs.cyr2lat_contacts, 0, 1);
+  _prefs.ui_pm_clock_mode = constrain(_prefs.ui_pm_clock_mode, 0, 1);
+  _prefs.ui_clock_dim_mode = constrain(_prefs.ui_clock_dim_mode, 0, 1);
   _cyr2lat_channels_enabled = _prefs.cyr2lat_channels != 0;
   _cyr2lat_contacts_enabled = _prefs.cyr2lat_contacts != 0;
 

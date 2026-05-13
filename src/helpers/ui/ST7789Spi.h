@@ -121,6 +121,8 @@ class ST7789Spi : public OLEDDisplay {
       setGeometry(g,width,height);
     }
 
+    const uint8_t* getFontData() const { return fontData; }
+
     bool connect(){
       this->_buffheight=displayHeight / 8;
       this->_buffheight+=displayHeight % 8 ? 1:0;

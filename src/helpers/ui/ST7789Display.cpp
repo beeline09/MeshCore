@@ -1,6 +1,7 @@
 #ifdef ST7789
 
 #include "ST7789Display.h"
+#include "glcdfont6x8.h"
 #ifdef CYRILLIC_SUPPORT
 #include "OLEDDisplayFontsRU.h"
 #endif
@@ -18,7 +19,9 @@
   #define SCALE_Y  2.65625f    // 170 / 64
 #else
   #define SCALE_X  1.875f      // 240 / 128
-  #define SCALE_Y  2.109375f   // 135 / 64
+  #define SCALE_Y  1.875f      // uniform — 64 virtual → 120px, centered in 135px
+  #undef  Y_OFFSET
+  #define Y_OFFSET 7           // (135 - 120) / 2
 #endif
 
 bool ST7789Display::begin() {
@@ -82,6 +85,8 @@ void ST7789Display::clear() {
 void ST7789Display::startFrame(Color bkg) {
   display.clear();
   _color = ST77XX_WHITE;
+  _text_scale = 1;
+  _use_v3_clock_font = false;
   display.setRGB(_color);
 #ifdef CYRILLIC_SUPPORT
   display.setFont(ArialMT_Plain_16_RU);
@@ -91,6 +96,8 @@ void ST7789Display::startFrame(Color bkg) {
 }
 
 void ST7789Display::setTextSize(int sz) {
+  _text_scale = 1;
+  _use_v3_clock_font = false;
   switch(sz) {
     case 1 :
 #ifdef CYRILLIC_SUPPORT
@@ -105,6 +112,9 @@ void ST7789Display::setTextSize(int sz) {
 #else
       display.setFont(ArialMT_Plain_24);
 #endif
+      break;
+    case 3 :
+      _use_v3_clock_font = true;
       break;
     default:
 #ifdef CYRILLIC_SUPPORT
@@ -122,22 +132,22 @@ void ST7789Display::setColor(Color c) {
       display.setColor(OLEDDISPLAY_COLOR::BLACK);
       break;
 #if 0
-    case DisplayDriver::LIGHT : 
+    case DisplayDriver::LIGHT :
       _color = ST77XX_WHITE;
       break;
-    case DisplayDriver::RED : 
+    case DisplayDriver::RED :
       _color = ST77XX_RED;
       break;
-    case DisplayDriver::GREEN : 
+    case DisplayDriver::GREEN :
       _color = ST77XX_GREEN;
       break;
-    case DisplayDriver::BLUE : 
+    case DisplayDriver::BLUE :
       _color = ST77XX_BLUE;
       break;
-    case DisplayDriver::YELLOW : 
+    case DisplayDriver::YELLOW :
       _color = ST77XX_YELLOW;
       break;
-    case DisplayDriver::ORANGE : 
+    case DisplayDriver::ORANGE :
       _color = ST77XX_ORANGE;
       break;
 #endif
@@ -150,12 +160,20 @@ void ST7789Display::setColor(Color c) {
 }
 
 void ST7789Display::setCursor(int x, int y) {
+  _logical_x = x;
+  _logical_y = y;
   _x = x*SCALE_X + X_OFFSET;
   _y = y*SCALE_Y + Y_OFFSET;
 }
 
 void ST7789Display::print(const char* str) {
-  display.drawString(_x, _y, str);
+  if (_use_v3_clock_font) {
+    drawV3ClockString(_logical_x, _logical_y, str);
+  } else if (_text_scale > 1) {
+    drawScaledString(_x, _y, str);
+  } else {
+    display.drawString(_x, _y, str);
+  }
 }
 
 void ST7789Display::printWordWrap(const char* str, int max_width) {
@@ -207,11 +225,140 @@ void ST7789Display::drawXbm(int x, int y, const uint8_t* bits, int w, int h) {
 }
 
 uint16_t ST7789Display::getTextWidth(const char* str) {
-  return display.getStringWidth(str) / SCALE_X;
+  if (_use_v3_clock_font) return getV3ClockTextWidth(str);
+  uint16_t phys_width = (_text_scale > 1) ? getScaledTextWidth(str) : display.getStringWidth(str);
+  return phys_width / SCALE_X;
+}
+
+void ST7789Display::drawTextCentered(int mid_x, int y, const char* str) {
+  if (_use_v3_clock_font) {
+    int w = getV3ClockTextWidth(str);
+    drawV3ClockString(mid_x - w / 2, y, str);
+    return;
+  }
+  int phys_mid_x = mid_x * SCALE_X + X_OFFSET;
+  int phys_y = y * SCALE_Y + Y_OFFSET;
+  int phys_w = (_text_scale > 1) ? getScaledTextWidth(str) : display.getStringWidth(str);
+  if (_text_scale > 1) {
+    drawScaledString(phys_mid_x - phys_w / 2, phys_y, str);
+  } else {
+    display.drawString(phys_mid_x - phys_w / 2, phys_y, str);
+  }
 }
 
 void ST7789Display::endFrame() {
   display.display();
+}
+
+uint16_t ST7789Display::getScaledTextWidth(const char* str) const {
+  const uint8_t* fontData = display.getFontData();
+  if (fontData == nullptr || str == nullptr) return 0;
+
+  uint8_t firstChar = pgm_read_byte(fontData + FIRST_CHAR_POS);
+  uint8_t charCount = pgm_read_byte(fontData + CHAR_NUM_POS);
+  uint16_t width = 0;
+
+  for (const char* p = str; *p; p++) {
+    uint8_t code = (uint8_t)*p;
+    if (code >= firstChar && code < firstChar + charCount) {
+      width += pgm_read_byte(fontData + JUMPTABLE_START +
+                             (code - firstChar) * JUMPTABLE_BYTES +
+                             JUMPTABLE_WIDTH) * _text_scale;
+    }
+  }
+  return width;
+}
+
+void ST7789Display::drawScaledString(int x, int y, const char* str) {
+  const uint8_t* fontData = display.getFontData();
+  if (fontData == nullptr || str == nullptr) return;
+
+  uint8_t textHeight = pgm_read_byte(fontData + HEIGHT_POS);
+  uint8_t firstChar = pgm_read_byte(fontData + FIRST_CHAR_POS);
+  uint8_t charCount = pgm_read_byte(fontData + CHAR_NUM_POS);
+  uint16_t jumpTableSize = charCount * JUMPTABLE_BYTES;
+  uint8_t rasterHeight = 1 + ((textHeight - 1) >> 3);
+  int cursorX = 0;
+
+  for (const char* p = str; *p; p++) {
+    uint8_t code = (uint8_t)*p;
+    if (code < firstChar || code >= firstChar + charCount) continue;
+
+    uint8_t charCode = code - firstChar;
+    uint16_t jump = ((uint16_t)pgm_read_byte(fontData + JUMPTABLE_START +
+                                             charCode * JUMPTABLE_BYTES) << 8) |
+                    pgm_read_byte(fontData + JUMPTABLE_START +
+                                  charCode * JUMPTABLE_BYTES + JUMPTABLE_LSB);
+    uint8_t byteSize = pgm_read_byte(fontData + JUMPTABLE_START +
+                                     charCode * JUMPTABLE_BYTES + JUMPTABLE_SIZE);
+    uint8_t charWidth = pgm_read_byte(fontData + JUMPTABLE_START +
+                                      charCode * JUMPTABLE_BYTES + JUMPTABLE_WIDTH);
+
+    if (jump != 0xFFFF) {
+      uint16_t charData = JUMPTABLE_START + jumpTableSize + jump;
+      for (uint8_t col = 0; col < charWidth; col++) {
+        for (uint8_t row = 0; row < textHeight; row++) {
+          uint16_t byteIndex = col * rasterHeight + (row >> 3);
+          if (byteIndex >= byteSize) continue;
+          uint8_t bits = pgm_read_byte(fontData + charData + byteIndex);
+          if (bits & (1 << (row & 7))) {
+            display.fillRect(x + cursorX + col * _text_scale,
+                             y + row * _text_scale,
+                             _text_scale,
+                             _text_scale);
+          }
+        }
+      }
+    }
+    cursorX += charWidth * _text_scale;
+  }
+}
+
+uint16_t ST7789Display::getV3ClockTextWidth(const char* str) const {
+  return str == nullptr ? 0 : strlen(str) * 6 * 3;
+}
+
+void ST7789Display::drawV3ClockString(int x, int y, const char* str) {
+  if (str == nullptr) return;
+
+#ifdef HELTEC_VISION_MASTER_T190
+  const float clockScaleX = 320.0f / 128.0f;
+  const float clockScaleY = 170.0f / 64.0f;
+#else
+  const float clockScaleX = 240.0f / 128.0f;
+  const float clockScaleY = 135.0f / 64.0f;
+#endif
+  const int textSize = 3;
+  int cursorX = x;
+
+  for (const char* p = str; *p; p++) {
+    uint8_t code = (uint8_t)*p;
+    if (code < 32) code = 32;
+    for (int row = 0; row < 8; row++) {
+      for (int col = 0; col < 6; col++) {
+        uint16_t bit = row * 6 + col;
+        uint8_t packed = pgm_read_byte(glcdfont6x8Bitmaps + (code - 32) * 6 + (bit >> 3));
+        if ((packed & (0x80 >> (bit & 7))) == 0) continue;
+
+        for (int sy = 0; sy < textSize; sy++) {
+          for (int sx = 0; sx < textSize; sx++) {
+            int vx = cursorX + col * textSize + sx;
+            int vy = y + row * textSize + sy;
+            int x1 = (int)(vx * clockScaleX);
+            int x2 = (int)((vx + 1) * clockScaleX);
+            int y1 = (int)(vy * clockScaleY);
+            int y2 = (int)((vy + 1) * clockScaleY);
+            int blockW = x2 - x1;
+            int blockH = y2 - y1;
+            if (blockW < 1) blockW = 1;
+            if (blockH < 1) blockH = 1;
+            display.fillRect(x1, y1, blockW, blockH);
+          }
+        }
+      }
+    }
+    cursorX += 6 * textSize;
+  }
 }
 
 #endif

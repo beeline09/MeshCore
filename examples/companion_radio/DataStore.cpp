@@ -235,6 +235,8 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     file.read((uint8_t *)_prefs.default_scope_key, sizeof(_prefs.default_scope_key));     // 121
     file.read((uint8_t *)&_prefs.cyr2lat_channels, sizeof(_prefs.cyr2lat_channels));      // 137
     file.read((uint8_t *)&_prefs.cyr2lat_contacts, sizeof(_prefs.cyr2lat_contacts));      // 138
+    file.read((uint8_t *)&_prefs.ui_pm_clock_mode, sizeof(_prefs.ui_pm_clock_mode));      // 139
+    file.read((uint8_t *)&_prefs.ui_clock_dim_mode, sizeof(_prefs.ui_clock_dim_mode));    // 140
 
     file.close();
   }
@@ -277,6 +279,8 @@ void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
     file.write((uint8_t *)_prefs.default_scope_key, sizeof(_prefs.default_scope_key));     // 121
     file.write((uint8_t *)&_prefs.cyr2lat_channels, sizeof(_prefs.cyr2lat_channels));      // 137
     file.write((uint8_t *)&_prefs.cyr2lat_contacts, sizeof(_prefs.cyr2lat_contacts));      // 138
+    file.write((uint8_t *)&_prefs.ui_pm_clock_mode, sizeof(_prefs.ui_pm_clock_mode));      // 139
+    file.write((uint8_t *)&_prefs.ui_clock_dim_mode, sizeof(_prefs.ui_clock_dim_mode));    // 140
 
     file.close();
   }

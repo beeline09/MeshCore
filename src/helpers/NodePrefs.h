@@ -71,4 +71,6 @@ struct NodePrefs {
   uint8_t  default_scope_key[16];
   uint8_t  cyr2lat_channels;
   uint8_t  cyr2lat_contacts;
+  uint8_t  ui_pm_clock_mode;
+  uint8_t  ui_clock_dim_mode;
 };

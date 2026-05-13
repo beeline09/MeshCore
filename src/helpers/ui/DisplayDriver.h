@@ -18,6 +18,7 @@ public:
   int height() const { return _h; }
 
   virtual bool isEink() const { return false; }
+  virtual bool isColorTFT() const { return false; }
   virtual bool isOn() = 0;
   virtual void turnOn() = 0;
   virtual void turnOff() = 0;

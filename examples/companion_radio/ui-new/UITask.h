@@ -78,6 +78,7 @@ public:
   int  getMsgCount() const { return _msgcount; }
   bool hasDisplay() const { return _display != NULL; }
   bool isEinkDisplay() const { return _display != nullptr && _display->isEink(); }
+  bool isColorTFTDisplay() const { return _display != nullptr && _display->isColorTFT(); }
   bool isButtonPressed() const;
 
   struct ClockPMInfo {
@@ -89,7 +90,7 @@ public:
   void consumeTopMsg();
   int  getUnreadMsgCount() const;
 
-  void setClockDimMode(int m) { _clock_dim_mode = m; }
+  void setClockDimMode(int m);
   int  getClockDimMode() const { return _clock_dim_mode; }
 
   bool isBuzzerQuiet() { 
