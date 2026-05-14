@@ -128,16 +128,20 @@ class HomeScreen : public UIScreen {
   int           _pm_clock_mode  = 1;   // 0=all msgs switch screen, 1=PM inline only
 
 #if defined(WITH_COMPANION_CLI) && defined(WITH_WIFI_SWITCHING)
-  static const int SETTINGS_N          = 7;
+  static const int SETTINGS_N          = 9;
   static const int SETTINGS_COMMS_IDX  = 3;
   static const int SETTINGS_PM_IDX     = 4;
   static const int SETTINGS_DIM_IDX    = 5;
-  static const int SETTINGS_BACK_IDX   = 6;
+  static const int SETTINGS_C2L_CH_IDX = 6;
+  static const int SETTINGS_C2L_DM_IDX = 7;
+  static const int SETTINGS_BACK_IDX   = 8;
 #elif defined(WITH_COMPANION_CLI)
-  static const int SETTINGS_N          = 6;
+  static const int SETTINGS_N          = 8;
   static const int SETTINGS_PM_IDX     = 3;
   static const int SETTINGS_DIM_IDX    = 4;
-  static const int SETTINGS_BACK_IDX   = 5;
+  static const int SETTINGS_C2L_CH_IDX = 5;
+  static const int SETTINGS_C2L_DM_IDX = 6;
+  static const int SETTINGS_BACK_IDX   = 7;
 #else
   static const int SETTINGS_N          = 3;
   static const int SETTINGS_PM_IDX     = 0;
@@ -739,6 +743,10 @@ public:
 #endif
           if      (i == SETTINGS_PM_IDX)   lbl = "PM CLOCK";
           else if (i == SETTINGS_DIM_IDX)  lbl = "CLOCK DIM";
+#ifdef WITH_COMPANION_CLI
+          else if (i == SETTINGS_C2L_CH_IDX) lbl = "Cyr2Lat Chan";
+          else if (i == SETTINGS_C2L_DM_IDX) lbl = "Cyr2Lat DM";
+#endif
           display.print(lbl);
           // value (not for Back)
           if (i != SETTINGS_BACK_IDX) {
@@ -771,6 +779,12 @@ public:
               snprintf(val, sizeof(val), "%s", pm_clok_vals[_pm_clock_mode]);
             } else if (i == SETTINGS_DIM_IDX) {
               snprintf(val, sizeof(val), "%s", dim_vals[_task->getClockDimMode()]);
+#ifdef WITH_COMPANION_CLI
+            } else if (i == SETTINGS_C2L_CH_IDX) {
+              snprintf(val, sizeof(val), "%s", the_mesh.isCyr2LatChannelsEnabled() ? "On" : "Off");
+            } else if (i == SETTINGS_C2L_DM_IDX) {
+              snprintf(val, sizeof(val), "%s", the_mesh.isCyr2LatContactsEnabled() ? "On" : "Off");
+#endif
             }
             display.drawTextRightAlign(display.width() - 2, y, val);
           }
@@ -891,6 +905,10 @@ public:
         } else if (_settings_sel == SETTINGS_DIM_IDX) {
           _task->setClockDimMode((_task->getClockDimMode() + 1) % 2);
 #ifdef WITH_COMPANION_CLI
+        } else if (_settings_sel == SETTINGS_C2L_CH_IDX) {
+          the_mesh.setCyr2LatChannelsEnabled(!the_mesh.isCyr2LatChannelsEnabled());
+        } else if (_settings_sel == SETTINGS_C2L_DM_IDX) {
+          the_mesh.setCyr2LatContactsEnabled(!the_mesh.isCyr2LatContactsEnabled());
         } else if (_settings_sel == 0) {
           the_mesh.setChatMode((the_mesh.getChatMode() + 1) % 4);
         } else if (_settings_sel == 1) {
