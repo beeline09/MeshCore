@@ -2903,6 +2903,18 @@ void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* c
   if (buf[0]) sendCliReplyChannel(ch_idx, buf);
 }
 
+void MyMesh::setCyr2LatChannelsEnabled(bool enabled) {
+  _cyr2lat_channels_enabled = enabled;
+  _prefs.cyr2lat_channels = enabled ? 1 : 0;
+  dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
+}
+
+void MyMesh::setCyr2LatContactsEnabled(bool enabled) {
+  _cyr2lat_contacts_enabled = enabled;
+  _prefs.cyr2lat_contacts = enabled ? 1 : 0;
+  dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
+}
+
 #endif  // WITH_COMPANION_CLI
 
 #ifdef WITH_WIFI_SWITCHING
