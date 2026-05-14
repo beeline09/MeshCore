@@ -296,6 +296,7 @@ private:
   uint8_t *sign_data;
   uint32_t sign_data_len;
   unsigned long dirty_contacts_expiry;
+  unsigned long dirty_prefs_expiry;
 
   TransportKey send_scope;
 

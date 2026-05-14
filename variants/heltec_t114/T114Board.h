@@ -8,7 +8,9 @@
 #define  PIN_VBAT_READ    4
 #define  PIN_BAT_CTL      6
 #define  MV_LSB           (3000.0F / 4096.0F) // 12-bit ADC with 3.0V input range
+#ifndef  ADC_MULTIPLIER
 #define  ADC_MULTIPLIER   4.9f                 // voltage-divider ratio; calibrate with 'set adc.multiplier'
+#endif
 
 class T114Board : public NRF52BoardDCDC {
   float adc_mult = ADC_MULTIPLIER;

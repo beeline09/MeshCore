@@ -104,6 +104,7 @@
 #define DIRECT_SEND_PERHOP_FACTOR       6.0f
 #define DIRECT_SEND_PERHOP_EXTRA_MILLIS 250
 #define LAZY_CONTACTS_WRITE_DELAY       5000
+#define LAZY_PREFS_WRITE_DELAY          2000
 
 #define PUBLIC_GROUP_PSK                "izOH6cXN6mrJ5e26oRXNcg=="
 
@@ -971,6 +972,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   next_ack_idx = 0;
   sign_data = NULL;
   dirty_contacts_expiry = 0;
+  dirty_prefs_expiry = 0;
   memset(advert_paths, 0, sizeof(advert_paths));
   memset(send_scope.key, 0, sizeof(send_scope.key));
 
@@ -1412,7 +1414,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     if (nlen > sizeof(_prefs.node_name) - 1) nlen = sizeof(_prefs.node_name) - 1; // max len
     memcpy(_prefs.node_name, &cmd_frame[1], nlen);
     _prefs.node_name[nlen] = 0; // null terminator
-    savePrefs();
+    dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
     writeOKFrame();
   } else if (cmd_frame[0] == CMD_SET_ADVERT_LATLON && len >= 9) {
     int32_t lat, lon, alt = 0;
@@ -1424,7 +1426,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     if (lat <= 90 * 1E6 && lat >= -90 * 1E6 && lon <= 180 * 1E6 && lon >= -180 * 1E6) {
       sensors.node_lat = ((double)lat) / 1000000.0;
       sensors.node_lon = ((double)lon) / 1000000.0;
-      savePrefs();
+      dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
       writeOKFrame();
     } else {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG); // invalid geo coordinate
@@ -1600,7 +1602,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       _prefs.freq = (float)freq / 1000.0;
       _prefs.bw = (float)bw / 1000.0;
       _prefs.client_repeat = repeat;
-      savePrefs();
+      dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
 
       radio_set_params(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
       MESH_DEBUG_PRINTLN("OK: CMD_SET_RADIO_PARAMS: f=%d, bw=%d, sf=%d, cr=%d", freq, bw, (uint32_t)sf,
@@ -1618,7 +1620,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
     } else {
       _prefs.tx_power_dbm = power;
-      savePrefs();
+      dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
       radio_set_tx_power(_prefs.tx_power_dbm);
       writeOKFrame();
     }
@@ -1631,7 +1633,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     i += 4;
     _prefs.rx_delay_base = ((float)rx) / 1000.0f;
     _prefs.airtime_factor = ((float)af) / 1000.0f;
-    savePrefs();
+    dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
     writeOKFrame();
   } else if (cmd_frame[0] == CMD_GET_TUNING_PARAMS) {
     uint32_t rx = _prefs.rx_delay_base * 1000, af = _prefs.airtime_factor * 1000;
@@ -1654,19 +1656,22 @@ void MyMesh::handleCmdFrame(size_t len) {
         }
       }
     }
-    savePrefs();
+    dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
     writeOKFrame();
   } else if (cmd_frame[0] == CMD_SET_PATH_HASH_MODE && cmd_frame[1] == 0 && len >= 3) {
     if (cmd_frame[2] >= 3) {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
     } else {
       _prefs.path_hash_mode = cmd_frame[2];
-      savePrefs();
+      dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
       writeOKFrame();
     }
   } else if (cmd_frame[0] == CMD_REBOOT && memcmp(&cmd_frame[1], "reboot", 6) == 0) {
     if (dirty_contacts_expiry) { // is there are pending dirty contacts write needed?
       saveContacts();
+    }
+    if (dirty_prefs_expiry) {
+      savePrefs();
     }
     board.reboot();
   } else if (cmd_frame[0] == CMD_GET_BATT_AND_STORAGE) {
@@ -1981,7 +1986,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     // ensure pin is zero, or a valid 6 digit pin
     if (pin == 0 || (pin >= 100000 && pin <= 999999)) {
       _prefs.ble_pin = pin;
-      savePrefs();
+      dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
       writeOKFrame();
     } else {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
@@ -2012,11 +2017,11 @@ void MyMesh::handleCmdFrame(size_t len) {
         // Update node preferences for GPS settings
         if (strcmp(sp, "gps") == 0) {
           _prefs.gps_enabled = (np[0] == '1') ? 1 : 0;
-          savePrefs();
+          dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
         } else if (strcmp(sp, "gps_interval") == 0) {
           uint32_t interval_seconds = atoi(np);
           _prefs.gps_interval = constrain(interval_seconds, 0, 86400);
-          savePrefs();
+          dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
         }
         #endif
         writeOKFrame();
@@ -2124,7 +2129,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       if (n > 0 && n < 31) {
         strcpy(_prefs.default_scope_name, (char *) &cmd_frame[1]);
         memcpy(_prefs.default_scope_key, &cmd_frame[1+31], 16);
-        savePrefs();
+        dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
         writeOKFrame();
       } else {
         writeErrFrame(ERR_CODE_ILLEGAL_ARG);
@@ -2132,7 +2137,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     } else {
       memset(_prefs.default_scope_name, 0, sizeof(_prefs.default_scope_name));  // set default scope to null
       memset(_prefs.default_scope_key, 0, sizeof(_prefs.default_scope_key));
-      savePrefs();
+      dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
       writeOKFrame();
     }
   } else if (cmd_frame[0] == CMD_GET_DEFAULT_FLOOD_SCOPE) {
@@ -2157,7 +2162,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     if (len >= 3) {
       _prefs.autoadd_max_hops = min(cmd_frame[2], (uint8_t)64);
     }
-    savePrefs();
+    dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
     writeOKFrame();
   } else if (cmd_frame[0] == CMD_GET_AUTOADD_CONFIG) {
     int i = 0;
@@ -2207,7 +2212,7 @@ void MyMesh::checkCLIRescueCmd() {
       const char* config = &cli_command[4];
       if (memcmp(config, "pin ", 4) == 0) {
         _prefs.ble_pin = atoi(&config[4]);
-        savePrefs();
+        dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
         Serial.printf("  > pin is now %06d\n", _prefs.ble_pin);
       } else {
         Serial.printf("  Error: unknown config: %s\n", config);
@@ -2395,10 +2400,12 @@ void MyMesh::loop() {
 #ifdef WITH_COMPANION_CLI
   if (_pending_reboot_at && millisHasNowPassed(_pending_reboot_at)) {
     _pending_reboot_at = 0;
+    if (dirty_prefs_expiry) { savePrefs(); dirty_prefs_expiry = 0; }
     board.reboot();
   }
   if (_pending_poweroff_at && millisHasNowPassed(_pending_poweroff_at)) {
     _pending_poweroff_at = 0;
+    if (dirty_prefs_expiry) { savePrefs(); dirty_prefs_expiry = 0; }
     board.powerOff();
   }
 #endif
@@ -2417,6 +2424,10 @@ void MyMesh::loop() {
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
     saveContacts();
     dirty_contacts_expiry = 0;
+  }
+  if (dirty_prefs_expiry && millisHasNowPassed(dirty_prefs_expiry)) {
+    savePrefs();
+    dirty_prefs_expiry = 0;
   }
 
 #ifdef DISPLAY_CLASS
@@ -2693,24 +2704,24 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
   } else if (strcmp(cmd, "set cyr2lat.channels on") == 0) {
     _cyr2lat_channels_enabled = true;
     _prefs.cyr2lat_channels = 1;
-    savePrefs();
+    dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
     strcpy(buf, "cyr2lat.channels: on");
   } else if (strcmp(cmd, "set cyr2lat.channels off") == 0) {
     _cyr2lat_channels_enabled = false;
     _prefs.cyr2lat_channels = 0;
-    savePrefs();
+    dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
     strcpy(buf, "cyr2lat.channels: off");
   } else if (strcmp(cmd, "get cyr2lat.contacts") == 0) {
     snprintf(buf, 512, "cyr2lat.contacts: %s", _cyr2lat_contacts_enabled ? "on" : "off");
   } else if (strcmp(cmd, "set cyr2lat.contacts on") == 0) {
     _cyr2lat_contacts_enabled = true;
     _prefs.cyr2lat_contacts = 1;
-    savePrefs();
+    dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
     strcpy(buf, "cyr2lat.contacts: on");
   } else if (strcmp(cmd, "set cyr2lat.contacts off") == 0) {
     _cyr2lat_contacts_enabled = false;
     _prefs.cyr2lat_contacts = 0;
-    savePrefs();
+    dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
     strcpy(buf, "cyr2lat.contacts: off");
 
 #ifdef WITH_WIFI_SWITCHING
