@@ -10,6 +10,10 @@
   #define DISPLAY_ROTATION 3
 #endif
 
+#ifndef EINK_FULL_REFRESH_INTERVAL
+  #define EINK_FULL_REFRESH_INTERVAL  20
+#endif
+
 bool E290Display::begin() {
   if (_init) return true;
 
@@ -61,6 +65,10 @@ void E290Display::turnOn() {
 
 void E290Display::turnOff() {
   if (_isOn) {
+    // Full refresh before power cut to park pixels and reduce image retention
+    display.fastmodeOff();
+    display.clear();
+    _partial_refresh_count = 0;
     powerOff();
     _isOn = false;
   }
@@ -166,7 +174,14 @@ uint16_t E290Display::getTextWidth(const char *str) {
 void E290Display::endFrame() {
   uint32_t crc = display_crc.finalize();
   if (crc != last_display_crc_value) {
-    display.update();
     last_display_crc_value = crc;
+    if (++_partial_refresh_count >= EINK_FULL_REFRESH_INTERVAL) {
+      display.fastmodeOff();
+      display.update();
+      display.fastmodeOn();
+      _partial_refresh_count = 0;
+    } else {
+      display.update();
+    }
   }
 }
