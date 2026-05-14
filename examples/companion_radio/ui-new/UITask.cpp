@@ -421,8 +421,12 @@ public:
       } else if (_task->isColorTFTDisplay()) {
         char dateBuf[12];
         strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
-        // T114 TFT is 240x135. OLED V3 clock is 24/64 = 37.5% screen height;
-        // ST7789 size 3 renders the same 6x8 bitmap clock scaled to TFT pixels.
+        // T114 TFT 240×135, virtual canvas 128×64 (SCALE=1.875, Y_OFFSET=7).
+        // setTextSize(3) activates glcdfont 6×8 renderer scaled via SCALE_X/Y — same
+        // macros as all other primitives, so virtual positions match exactly:
+        //   clock  virt 22–46 → phys 48–93 px  (45 px = 37.5% usable, same as OLED V3)
+        //   date   virt 46    → phys 93 px      (ArialMT_Plain_24, 24 px tall → 117 px)
+        //   source virt 58    → phys 115 px     (ArialMT_Plain_16, 16 px tall → 131 px)
         display.setTextSize(3);
         display.drawTextCentered(display.width() / 2, content_y, timeBuf);
         display.setTextSize(2);

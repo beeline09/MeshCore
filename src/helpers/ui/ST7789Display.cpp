@@ -6,12 +6,26 @@
 #include "OLEDDisplayFontsRU.h"
 #endif
 
+// Coordinate system
+// -----------------
+// The display API (DisplayDriver) uses a VIRTUAL canvas of 128×64 px — same as SSD1306 OLED.
+// All incoming x/y arguments are virtual. Physical pixels are obtained by:
+//   phys_x = virtual_x * SCALE_X + X_OFFSET
+//   phys_y = virtual_y * SCALE_Y + Y_OFFSET
+//
+// T114 (240×135): uniform scale 1.875 keeps aspect ratio square; Y_OFFSET=7 letterboxes
+//   the 120px content band vertically (7px top, 8px bottom).
+// T190 (320×170): non-uniform scale is acceptable — aspect ratio matches 5:2.66 panel.
+//
+// Every drawing primitive (fillRect, drawXbm, drawV3ClockString, …) MUST use these macros
+// so the coordinate system stays consistent across the whole driver.
+
 #ifndef X_OFFSET
-#define X_OFFSET 0  // No offset needed for landscape
+#define X_OFFSET 0
 #endif
 
 #ifndef Y_OFFSET
-#define Y_OFFSET 1  // Vertical offset to prevent top row cutoff
+#define Y_OFFSET 1
 #endif
 
 #ifdef HELTEC_VISION_MASTER_T190
@@ -114,6 +128,8 @@ void ST7789Display::setTextSize(int sz) {
 #endif
       break;
     case 3 :
+      // OLEDDisplay cannot scale ArialMT fonts; size 3 activates the glcdfont6×8 renderer
+      // (drawV3ClockString) which draws at textSize=3 and maps pixels through SCALE_X/Y.
       _use_v3_clock_font = true;
       break;
     default:
@@ -189,36 +205,23 @@ void ST7789Display::drawRect(int x, int y, int w, int h) {
 }
 
 void ST7789Display::drawXbm(int x, int y, const uint8_t* bits, int w, int h) {
-  // Calculate the base position in display coordinates
+  // Each virtual pixel becomes a SCALE×SCALE block. Block boundaries are computed
+  // per-pixel (not as startX + bx*SCALE) to avoid cumulative rounding error across
+  // the bitmap — keeps icon edges sharp and proportions square.
   uint16_t startX = x * SCALE_X + X_OFFSET;
   uint16_t startY = y * SCALE_Y + Y_OFFSET;
-  
-  // Width in bytes for bitmap processing
   uint16_t widthInBytes = (w + 7) / 8;
-  
-  // Process the bitmap row by row
+
   for (uint16_t by = 0; by < h; by++) {
-    // Calculate the target y-coordinates for this logical row
     int y1 = startY + (int)(by * SCALE_Y);
     int y2 = startY + (int)((by + 1) * SCALE_Y);
     int block_h = y2 - y1;
-    
-    // Scan across the row bit by bit
     for (uint16_t bx = 0; bx < w; bx++) {
-      // Calculate the target x-coordinates for this logical column
-      int x1 = startX + (int)(bx * SCALE_X);
-      int x2 = startX + (int)((bx + 1) * SCALE_X);
-      int block_w = x2 - x1;
-      
-      // Get the current bit
       uint16_t byteOffset = (by * widthInBytes) + (bx / 8);
-      uint8_t bitMask = 0x80 >> (bx & 7);
-      bool bitSet = pgm_read_byte(bits + byteOffset) & bitMask;
-      
-      // If the bit is set, draw a block of pixels
-      if (bitSet) {
-        // Draw the block as a filled rectangle
-        display.fillRect(x1, y1, block_w, block_h);
+      if (pgm_read_byte(bits + byteOffset) & (0x80 >> (bx & 7))) {
+        int x1 = startX + (int)(bx * SCALE_X);
+        int x2 = startX + (int)((bx + 1) * SCALE_X);
+        display.fillRect(x1, y1, x2 - x1, block_h);
       }
     }
   }
@@ -250,6 +253,8 @@ void ST7789Display::endFrame() {
   display.display();
 }
 
+// Returns physical-space width of str rendered at _text_scale, used for manual centering
+// before calling drawScaledString (which takes physical x,y).
 uint16_t ST7789Display::getScaledTextWidth(const char* str) const {
   const uint8_t* fontData = display.getFontData();
   if (fontData == nullptr || str == nullptr) return 0;
@@ -269,6 +274,9 @@ uint16_t ST7789Display::getScaledTextWidth(const char* str) const {
   return width;
 }
 
+// Renders str at physical (x, y) by drawing each font bit as a _text_scale×_text_scale block.
+// Needed because OLEDDisplay::drawString writes to a 1-bpp framebuffer and cannot upscale.
+// x, y here are physical coordinates (already transformed by SCALE + OFFSET).
 void ST7789Display::drawScaledString(int x, int y, const char* str) {
   const uint8_t* fontData = display.getFontData();
   if (fontData == nullptr || str == nullptr) return;
@@ -314,20 +322,19 @@ void ST7789Display::drawScaledString(int x, int y, const char* str) {
   }
 }
 
+// Returns virtual-space width so drawTextCentered can compute virtual x offset.
+// 6 columns/char × textSize=3 virtual px/column.
 uint16_t ST7789Display::getV3ClockTextWidth(const char* str) const {
   return str == nullptr ? 0 : strlen(str) * 6 * 3;
 }
 
+// Renders str using the glcdfont 6×8 bitmap at textSize=3, mapped to physical pixels
+// through the same SCALE_X/SCALE_Y/Y_OFFSET as all other drawing primitives.
+// x, y are VIRTUAL coordinates (same space as setCursor).
+// Block boundaries are recomputed per sub-pixel to eliminate cumulative rounding drift.
 void ST7789Display::drawV3ClockString(int x, int y, const char* str) {
   if (str == nullptr) return;
 
-#ifdef HELTEC_VISION_MASTER_T190
-  const float clockScaleX = 320.0f / 128.0f;
-  const float clockScaleY = 170.0f / 64.0f;
-#else
-  const float clockScaleX = 240.0f / 128.0f;
-  const float clockScaleY = 135.0f / 64.0f;
-#endif
   const int textSize = 3;
   int cursorX = x;
 
@@ -344,10 +351,10 @@ void ST7789Display::drawV3ClockString(int x, int y, const char* str) {
           for (int sx = 0; sx < textSize; sx++) {
             int vx = cursorX + col * textSize + sx;
             int vy = y + row * textSize + sy;
-            int x1 = (int)(vx * clockScaleX);
-            int x2 = (int)((vx + 1) * clockScaleX);
-            int y1 = (int)(vy * clockScaleY);
-            int y2 = (int)((vy + 1) * clockScaleY);
+            int x1 = (int)(vx * SCALE_X) + X_OFFSET;
+            int x2 = (int)((vx + 1) * SCALE_X) + X_OFFSET;
+            int y1 = (int)(vy * SCALE_Y) + Y_OFFSET;
+            int y2 = (int)((vy + 1) * SCALE_Y) + Y_OFFSET;
             int blockW = x2 - x1;
             int blockH = y2 - y1;
             if (blockW < 1) blockW = 1;
