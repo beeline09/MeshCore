@@ -1155,6 +1155,10 @@ uint32_t MyMesh::getBLEPin() {
   return _active_ble_pin;
 }
 
+void MyMesh::deferSavePrefs() {
+  dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
+}
+
 struct FreqRange {
   uint32_t lower_freq, upper_freq;
 };
@@ -1667,13 +1671,21 @@ void MyMesh::handleCmdFrame(size_t len) {
       writeOKFrame();
     }
   } else if (cmd_frame[0] == CMD_REBOOT && memcmp(&cmd_frame[1], "reboot", 6) == 0) {
-    if (!_serial || !_serial->isConnected()) {
+#ifdef NRF52_PLATFORM
+    if (_serial && _serial->isConnected()) {
+      // NRF52: can't write flash while BLE connected — defer, loop() will disconnect + save
+      _pending_reboot_at = futureMillis(1500);
+      _pending_reboot_deadline = futureMillis(30000);
+    } else {
+#else
+    {
+#endif
       if (dirty_contacts_expiry) { saveContacts(); dirty_contacts_expiry = 0; }
       if (dirty_prefs_expiry)    { savePrefs();    dirty_prefs_expiry    = 0; }
+#ifdef ESP32
+      SPIFFS.end();
+#endif
       board.reboot();
-    } else {
-      // BLE still connected — defer reboot; loop() will flush dirty writes after disconnect
-      _pending_reboot_at = futureMillis(1500);
     }
   } else if (cmd_frame[0] == CMD_GET_BATT_AND_STORAGE) {
     uint8_t reply[11];
@@ -1987,6 +1999,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     // ensure pin is zero, or a valid 6 digit pin
     if (pin == 0 || (pin >= 100000 && pin <= 999999)) {
       _prefs.ble_pin = pin;
+      _active_ble_pin = pin;   // update display immediately; BLE restart (reboot) needed to enforce
       dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
       writeOKFrame();
     } else {
@@ -2400,20 +2413,48 @@ void MyMesh::loop() {
 
 #ifdef WITH_COMPANION_CLI
   if (_pending_reboot_at && millisHasNowPassed(_pending_reboot_at)) {
-    _pending_reboot_at = 0;
-    if (!_serial || !_serial->isConnected()) {
-      if (dirty_contacts_expiry) { saveContacts(); dirty_contacts_expiry = 0; }
-      if (dirty_prefs_expiry)    { savePrefs();    dirty_prefs_expiry    = 0; }
+#ifdef NRF52_PLATFORM
+    bool ble_busy = _serial && _serial->isConnected();
+#else
+    bool ble_busy = false;
+#endif
+    bool has_dirty = dirty_contacts_expiry || dirty_prefs_expiry;
+    if (ble_busy && has_dirty && !millisHasNowPassed(_pending_reboot_deadline)) {
+      _serial->disconnect();  // NRF52: kick BLE so flash is available for save
+      _pending_reboot_at = futureMillis(500);  // wait for disconnect to complete
+    } else {
+      _pending_reboot_at = 0;
+      if (!ble_busy) {
+        if (dirty_contacts_expiry) { saveContacts(); dirty_contacts_expiry = 0; }
+        if (dirty_prefs_expiry)    { savePrefs();    dirty_prefs_expiry    = 0; }
+      }
+#ifdef ESP32
+      SPIFFS.end();
+#endif
+      board.reboot();
     }
-    board.reboot();
   }
   if (_pending_poweroff_at && millisHasNowPassed(_pending_poweroff_at)) {
-    _pending_poweroff_at = 0;
-    if (!_serial || !_serial->isConnected()) {
-      if (dirty_contacts_expiry) { saveContacts(); dirty_contacts_expiry = 0; }
-      if (dirty_prefs_expiry)    { savePrefs();    dirty_prefs_expiry    = 0; }
+#ifdef NRF52_PLATFORM
+    bool ble_busy = _serial && _serial->isConnected();
+#else
+    bool ble_busy = false;
+#endif
+    bool has_dirty = dirty_contacts_expiry || dirty_prefs_expiry;
+    if (ble_busy && has_dirty && !millisHasNowPassed(_pending_poweroff_deadline)) {
+      _serial->disconnect();  // NRF52: kick BLE so flash is available for save
+      _pending_poweroff_at = futureMillis(500);  // wait for disconnect to complete
+    } else {
+      _pending_poweroff_at = 0;
+      if (!ble_busy) {
+        if (dirty_contacts_expiry) { saveContacts(); dirty_contacts_expiry = 0; }
+        if (dirty_prefs_expiry)    { savePrefs();    dirty_prefs_expiry    = 0; }
+      }
+#ifdef ESP32
+      SPIFFS.end();
+#endif
+      board.powerOff();
     }
-    board.powerOff();
   }
 #endif
 
@@ -2429,7 +2470,11 @@ void MyMesh::loop() {
 
   // On NRF52 with SoftDevice, flash writes block if BLE is active (S140 v6.1.1 known issue).
   // Defer until after disconnect; retry every 1 s while connected.
+#ifdef NRF52_PLATFORM
   bool ble_busy = _serial && _serial->isConnected();
+#else
+  bool ble_busy = false;
+#endif
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
     if (!ble_busy) {
       saveContacts();
@@ -2635,7 +2680,20 @@ int MyMesh::mapCyr2LatChannelRawLog(const uint8_t* raw, int len, uint8_t* mapped
 
 bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool is_remote) {
   if (strcmp(cmd, "pin") == 0) {
-    snprintf(buf, 512, "CLI PIN: %s", _cli_pin);
+    snprintf(buf, 512, "CLI PIN: %s  BLE PIN: %06lu", _cli_pin, (unsigned long)_prefs.ble_pin);
+
+  } else if (strcmp(cmd, "get ble.pin") == 0) {
+    snprintf(buf, 512, "ble.pin: %06lu", (unsigned long)_prefs.ble_pin);
+  } else if (strncmp(cmd, "set ble.pin ", 12) == 0) {
+    uint32_t pin = (uint32_t)atol(cmd + 12);
+    if (pin == 0 || (pin >= 100000 && pin <= 999999)) {
+      _prefs.ble_pin = pin;
+      _active_ble_pin = pin;
+      dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
+      snprintf(buf, 512, "ble.pin: %06lu (reboot to apply)", (unsigned long)pin);
+    } else {
+      strcpy(buf, "ERR: pin must be 0 (auto) or 100000–999999");
+    }
 
   } else if (strcmp(cmd, "timesync") == 0) {
     _ts.buildReply(buf, getRTCClock());
@@ -2863,10 +2921,12 @@ void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const 
   if (strcmp(cmd, "reboot") == 0) {
     sendCliReplyPM(from, "rebooting in 1s...");
     _pending_reboot_at = futureMillis(1000);
+    _pending_reboot_deadline = futureMillis(30000);
     return;
   } else if (strcmp(cmd, "poweroff") == 0 || strcmp(cmd, "shutdown") == 0) {
     sendCliReplyPM(from, "powering off...");
     _pending_poweroff_at = futureMillis(500);
+    _pending_poweroff_deadline = futureMillis(30000);
     return;
   } else if (!handleCliCmd(sender_ts, cmd, buf, true)) {
     if (_cli) _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
@@ -2891,9 +2951,11 @@ void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* c
   if (strcmp(cmd, "reboot") == 0) {
     strcpy(buf, "rebooting in 1s...");
     _pending_reboot_at = futureMillis(1000);
+    _pending_reboot_deadline = futureMillis(30000);
   } else if (strcmp(cmd, "poweroff") == 0 || strcmp(cmd, "shutdown") == 0) {
     strcpy(buf, "powering off...");
     _pending_poweroff_at = futureMillis(500);
+    _pending_poweroff_deadline = futureMillis(30000);
   } else if (!handleCliCmd(sender_ts, cmd, buf, false)) {
     if (_cli) _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
     else      strcpy(buf, "ERR: CLI not initialized");
@@ -3027,9 +3089,13 @@ void MyMesh::checkWifiConnection() {
 void MyMesh::initCommsFromPrefs() {
   loadWifiPrefs();
   if (_active_ble_pin == 0) {
-    StdRNG rng;
-    _active_ble_pin = rng.nextInt(100000, 999999);
-    _prefs.ble_pin = _active_ble_pin;
+    if (_prefs.ble_pin != 0) {
+      _active_ble_pin = _prefs.ble_pin;  // restore persisted pin (BLE_PIN_CODE not set in uni builds)
+    } else {
+      StdRNG rng;
+      _active_ble_pin = rng.nextInt(100000, 999999);
+      _prefs.ble_pin = _active_ble_pin;
+    }
   }
   _ble_iface.begin(BLE_NAME_PREFIX, _prefs.node_name, _active_ble_pin);
   if (_wifi_prefs.comms_mode == COMMS_MODE_WIFI && _wifi_prefs.network_count > 0) {

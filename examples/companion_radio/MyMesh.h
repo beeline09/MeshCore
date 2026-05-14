@@ -202,6 +202,7 @@ protected:
 
 public:
   void savePrefs() { _store->savePrefs(_prefs, sensors.node_lat, sensors.node_lon); }
+  void deferSavePrefs();   // schedule flash write to happen outside of BLE connection
 
 #ifdef WITH_COMPANION_CLI
   const char* getCliPin() const { return _cli_pin; }
@@ -347,7 +348,9 @@ private:
   CompanionCLICallbacks* _cli_cb = nullptr;
   char                   _cli_pin[9];
   unsigned long          _pending_reboot_at = 0;
+  unsigned long          _pending_reboot_deadline = 0;
   unsigned long          _pending_poweroff_at = 0;
+  unsigned long          _pending_poweroff_deadline = 0;
   bool                   _remote_cli_enabled = true;
   bool                   _terminal_cli_enabled = true;
   bool                   _cyr2lat_channels_enabled = false;

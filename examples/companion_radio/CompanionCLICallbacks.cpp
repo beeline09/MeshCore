@@ -4,7 +4,7 @@
 #include <target.h>
 
 void CompanionCLICallbacks::savePrefs() {
-  _mesh.savePrefs();
+  _mesh.deferSavePrefs();
 }
 
 const char* CompanionCLICallbacks::getFirmwareVer() {
