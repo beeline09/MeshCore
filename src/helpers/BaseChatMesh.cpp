@@ -212,7 +212,13 @@ void BaseChatMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender
     uint8_t flags = data[4] >> 2;   // message attempt number, and other flags
 
     // len can be > original length, but 'text' will be padded with zeroes
-    data[len] = 0; // need to make a C string again, with null terminator
+    // SAFETY: Ensure we don't write past buffer boundary
+    if (len < MAX_PACKET_PAYLOAD) {
+      data[len] = 0; // need to make a C string again, with null terminator
+    } else {
+      MESH_DEBUG_PRINTLN("onPeerDataRecv: message len (%d) exceeds MAX_PACKET_PAYLOAD (%d)", len, MAX_PACKET_PAYLOAD);
+      return;  // drop malformed packet
+    }
 
     if (flags == TXT_TYPE_PLAIN) {
       from.lastmod = getRTCClock()->getCurrentTime(); // update last heard time
@@ -369,6 +375,7 @@ void BaseChatMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mes
     memcpy(&timestamp, data, 4);
 
     // len can be > original length, but 'text' will be padded with zeroes
+    if (len >= MAX_PACKET_PAYLOAD) return;  // malformed: would overflow data[] on stack
     data[len] = 0; // need to make a C string again, with null terminator
 
     // notify UI  of this new message

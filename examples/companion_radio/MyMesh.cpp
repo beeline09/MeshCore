@@ -615,7 +615,7 @@ void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t 
   }
 #ifdef WITH_COMPANION_CLI
   MESH_DEBUG_PRINTLN("PM recv: cli=%s pin='%.8s' text='%.20s'", _cli ? "set" : "NULL", _cli_pin, text);
-  if (_remote_cli_enabled && _cli_pin[0] && strncasecmp(text, _cli_pin, 8) == 0 && text[8] == ' ') {
+  if (_remote_cli_enabled && _cli_pin[0] && strlen(text) > 8 && strncasecmp(text, _cli_pin, 8) == 0 && text[8] == ' ') {
     handleRemoteCLI(from, sender_timestamp, text + 9);
     return;
   }
@@ -1667,13 +1667,14 @@ void MyMesh::handleCmdFrame(size_t len) {
       writeOKFrame();
     }
   } else if (cmd_frame[0] == CMD_REBOOT && memcmp(&cmd_frame[1], "reboot", 6) == 0) {
-    if (dirty_contacts_expiry) { // is there are pending dirty contacts write needed?
-      saveContacts();
+    if (!_serial || !_serial->isConnected()) {
+      if (dirty_contacts_expiry) { saveContacts(); dirty_contacts_expiry = 0; }
+      if (dirty_prefs_expiry)    { savePrefs();    dirty_prefs_expiry    = 0; }
+      board.reboot();
+    } else {
+      // BLE still connected — defer reboot; loop() will flush dirty writes after disconnect
+      _pending_reboot_at = futureMillis(1500);
     }
-    if (dirty_prefs_expiry) {
-      savePrefs();
-    }
-    board.reboot();
   } else if (cmd_frame[0] == CMD_GET_BATT_AND_STORAGE) {
     uint8_t reply[11];
     int i = 0;
@@ -2400,12 +2401,18 @@ void MyMesh::loop() {
 #ifdef WITH_COMPANION_CLI
   if (_pending_reboot_at && millisHasNowPassed(_pending_reboot_at)) {
     _pending_reboot_at = 0;
-    if (dirty_prefs_expiry) { savePrefs(); dirty_prefs_expiry = 0; }
+    if (!_serial || !_serial->isConnected()) {
+      if (dirty_contacts_expiry) { saveContacts(); dirty_contacts_expiry = 0; }
+      if (dirty_prefs_expiry)    { savePrefs();    dirty_prefs_expiry    = 0; }
+    }
     board.reboot();
   }
   if (_pending_poweroff_at && millisHasNowPassed(_pending_poweroff_at)) {
     _pending_poweroff_at = 0;
-    if (dirty_prefs_expiry) { savePrefs(); dirty_prefs_expiry = 0; }
+    if (!_serial || !_serial->isConnected()) {
+      if (dirty_contacts_expiry) { saveContacts(); dirty_contacts_expiry = 0; }
+      if (dirty_prefs_expiry)    { savePrefs();    dirty_prefs_expiry    = 0; }
+    }
     board.powerOff();
   }
 #endif
@@ -2420,14 +2427,24 @@ void MyMesh::loop() {
     checkSerialInterface();
   }
 
-  // is there are pending dirty contacts write needed?
+  // On NRF52 with SoftDevice, flash writes block if BLE is active (S140 v6.1.1 known issue).
+  // Defer until after disconnect; retry every 1 s while connected.
+  bool ble_busy = _serial && _serial->isConnected();
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
-    saveContacts();
-    dirty_contacts_expiry = 0;
+    if (!ble_busy) {
+      saveContacts();
+      dirty_contacts_expiry = 0;
+    } else {
+      dirty_contacts_expiry = futureMillis(1000);
+    }
   }
   if (dirty_prefs_expiry && millisHasNowPassed(dirty_prefs_expiry)) {
-    savePrefs();
-    dirty_prefs_expiry = 0;
+    if (!ble_busy) {
+      savePrefs();
+      dirty_prefs_expiry = 0;
+    } else {
+      dirty_prefs_expiry = futureMillis(1000);
+    }
   }
 
 #ifdef DISPLAY_CLASS
@@ -2477,11 +2494,14 @@ static int splitCliReply(const char* buf, char out[][152], int max_chunks) {
 }
 
 void MyMesh::sendCliReplyPM(const ContactInfo& to, const char* buf) {
-  char chunks[8][152];
+  // static: loop_task is single-threaded; these are never called re-entrantly.
+  // Without static, chunks[8][152]=1216B + handleRemoteCLI's buf[512]+cmdBuf[256]
+  // overflows the 4096B FreeRTOS loop_task stack → immediate hard fault, no log output.
+  static char chunks[8][152];
+  static char text[160];
   int n = splitCliReply(buf, chunks, 8);
   uint32_t ack_dummy, timeout_dummy;
   for (int i = 0; i < n; i++) {
-    char text[160];
     if (n > 1)
       snprintf(text, sizeof(text), "[%d/%d] %s", i + 1, n, chunks[i]);
     else
@@ -2492,12 +2512,12 @@ void MyMesh::sendCliReplyPM(const ContactInfo& to, const char* buf) {
 }
 
 void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf) {
-  char chunks[8][152];
+  static char chunks[8][152];
+  static char text[200];
   int n = splitCliReply(buf, chunks, 8);
   uint32_t now = getRTCClock()->getCurrentTimeUnique();
 
   for (int i = 0; i < n; i++) {
-    char text[200];
     if (n > 1)
       snprintf(text, sizeof(text), "%s: [%d/%d] %s", _prefs.node_name, i + 1, n, chunks[i]);
     else
@@ -2828,7 +2848,8 @@ void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const 
   char from_hex[9];
   mesh::Utils::toHex(from_hex, from.id.pub_key, 4);
 
-  char cmdBuf[256];
+  // static: saves 768B (cmdBuf+buf) from the loop_task stack on every call
+  static char cmdBuf[256];
   strncpy(cmdBuf, cmd, sizeof(cmdBuf) - 1);
   cmdBuf[sizeof(cmdBuf) - 1] = '\0';
   char* e = cmdBuf + strlen(cmdBuf);
@@ -2837,7 +2858,7 @@ void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const 
 
   MESH_DEBUG_PRINTLN("CLI/PM from=%s cmd='%s'", from_hex, cmd);
 
-  char buf[512];
+  static char buf[512];
   buf[0] = '\0';
   if (strcmp(cmd, "reboot") == 0) {
     sendCliReplyPM(from, "rebooting in 1s...");
@@ -2856,7 +2877,7 @@ void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const 
 }
 
 void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* cmd) {
-  char cmdBuf[256];
+  static char cmdBuf[256];
   strncpy(cmdBuf, cmd, sizeof(cmdBuf) - 1);
   cmdBuf[sizeof(cmdBuf) - 1] = '\0';
   char* e = cmdBuf + strlen(cmdBuf);
@@ -2865,7 +2886,7 @@ void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* c
 
   MESH_DEBUG_PRINTLN("CLI/Terminal ch=%u cmd='%s'", ch_idx, cmd);
 
-  char buf[512];
+  static char buf[512];
   buf[0] = '\0';
   if (strcmp(cmd, "reboot") == 0) {
     strcpy(buf, "rebooting in 1s...");
