@@ -13,6 +13,10 @@
   #define DISPLAY_ROTATION 3
 #endif
 
+#ifndef EINK_FULL_REFRESH_INTERVAL
+  #define EINK_FULL_REFRESH_INTERVAL  20
+#endif
+
 #ifdef ESP32
   SPIClass SPI1 = SPIClass(FSPI);
 #endif
@@ -55,6 +59,9 @@ void GxEPDDisplay::turnOff() {
 #elif defined(EXP_PIN_BACKLIGHT) && !defined(BACKLIGHT_BTN)
   expander.digitalWrite(EXP_PIN_BACKLIGHT, LOW);
 #endif
+  display.hibernate();
+  _partial_refresh_count = 0;
+  _init = false;  // force re-init on next turnOn() after hibernate
   _isOn = false;
 }
 
@@ -189,7 +196,12 @@ uint16_t GxEPDDisplay::getTextWidth(const char* str) {
 void GxEPDDisplay::endFrame() {
   uint32_t crc = display_crc.finalize();
   if (crc != last_display_crc_value) {
-    display.display(true);
     last_display_crc_value = crc;
+    if (++_partial_refresh_count >= EINK_FULL_REFRESH_INTERVAL) {
+      display.display(false);  // full refresh
+      _partial_refresh_count = 0;
+    } else {
+      display.display(true);   // partial refresh
+    }
   }
 }
