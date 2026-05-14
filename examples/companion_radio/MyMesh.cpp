@@ -987,6 +987,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _prefs.gps_interval = 0;      // No automatic GPS updates by default
   _prefs.ui_pm_clock_mode = 1;  // PM inline on clock page by default
   _prefs.ui_clock_dim_mode = 0; // normal auto-off by default
+  _prefs.adc_multiplier = 0.0f; // 0.0f = use board default
   //_prefs.rx_delay_base = 10.0f;  enable once new algo fixed
 #if defined(USE_SX1262) || defined(USE_SX1268)
 #ifdef SX126X_RX_BOOSTED_GAIN
@@ -1070,6 +1071,8 @@ void MyMesh::begin(bool has_display) {
   _prefs.cyr2lat_contacts = constrain(_prefs.cyr2lat_contacts, 0, 1);
   _prefs.ui_pm_clock_mode = constrain(_prefs.ui_pm_clock_mode, 0, 1);
   _prefs.ui_clock_dim_mode = constrain(_prefs.ui_clock_dim_mode, 0, 1);
+  _prefs.adc_multiplier = constrain(_prefs.adc_multiplier, 0.0f, 10.0f);
+  board.setAdcMultiplier(_prefs.adc_multiplier);
   _cyr2lat_channels_enabled = _prefs.cyr2lat_channels != 0;
   _cyr2lat_contacts_enabled = _prefs.cyr2lat_contacts != 0;
 

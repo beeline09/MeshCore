@@ -7,9 +7,12 @@
 // built-ins
 #define  PIN_VBAT_READ    4
 #define  PIN_BAT_CTL      6
-#define  MV_LSB   (3000.0F / 4096.0F) // 12-bit ADC with 3.0V input range
+#define  MV_LSB           (3000.0F / 4096.0F) // 12-bit ADC with 3.0V input range
+#define  ADC_MULTIPLIER   4.9f                 // voltage-divider ratio; calibrate with 'set adc.multiplier'
 
 class T114Board : public NRF52BoardDCDC {
+  float adc_mult = ADC_MULTIPLIER;
+
 protected:
 #ifdef NRF52_POWER_MANAGEMENT
   void initiateShutdown(uint8_t reason) override;
@@ -39,7 +42,15 @@ public:
     adcvalue = analogRead(PIN_VBAT_READ);
     digitalWrite(6, 0);
 
-    return (uint16_t)((float)adcvalue * MV_LSB * 4.9);
+    return (uint16_t)((float)adcvalue * MV_LSB * adc_mult);
+  }
+
+  bool setAdcMultiplier(float multiplier) override {
+    adc_mult = (multiplier == 0.0f) ? ADC_MULTIPLIER : multiplier;
+    return true;
+  }
+  float getAdcMultiplier() const override {
+    return adc_mult;
   }
 
   const char* getManufacturerName() const override {
