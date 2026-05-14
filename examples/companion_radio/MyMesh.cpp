@@ -1002,6 +1002,9 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
 
 void MyMesh::noteTimeSource(TimeSource source) {
   _time_source = source;
+#ifdef DISPLAY_CLASS
+  if (_ui) _ui->notify();
+#endif
 }
 
 bool MyMesh::hasRecentAppTimeSet() const {

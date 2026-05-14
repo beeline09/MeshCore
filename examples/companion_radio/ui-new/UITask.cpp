@@ -1284,6 +1284,7 @@ switch(t){
     vibration.trigger();
   }
 #endif
+  _next_refresh = 0;  // always trigger a redraw on any notification
 }
 
 
