@@ -226,6 +226,19 @@ public:
     _ts_from_adverts  = (m == 0 || m == 2);
     _ts_from_messages = (m == 0);
   }
+
+  bool isCyr2LatChannelsEnabled() const { return _cyr2lat_channels_enabled; }
+  bool isCyr2LatContactsEnabled() const { return _cyr2lat_contacts_enabled; }
+  void setCyr2LatChannelsEnabled(bool enabled) {
+    _cyr2lat_channels_enabled = enabled;
+    _prefs.cyr2lat_channels = enabled ? 1 : 0;
+    savePrefs();
+  }
+  void setCyr2LatContactsEnabled(bool enabled) {
+    _cyr2lat_contacts_enabled = enabled;
+    _prefs.cyr2lat_contacts = enabled ? 1 : 0;
+    savePrefs();
+  }
 #endif
 
 #ifdef WITH_WIFI_SWITCHING
