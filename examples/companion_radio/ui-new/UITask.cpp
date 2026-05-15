@@ -357,7 +357,11 @@ public:
     if (_page == HomePage::FIRST) {
       display.setColor(DisplayDriver::YELLOW);
       display.setTextSize(2);
-      sprintf(tmp, "MSG: %d", _task->getMsgCount());
+      int unrd = _task->getUnreadMsgCount();
+      if (unrd > 0)
+        sprintf(tmp, "NEW: %d", unrd);
+      else
+        sprintf(tmp, "MSG: %d", _task->getMsgCount());
       display.drawTextCentered(display.width() / 2, content_y, tmp);
 
       #ifdef WIFI_SSID
@@ -1006,6 +1010,17 @@ public:
       _shutdown_init = true;  // need to wait for button to be released
       return true;
     }
+    if (c == KEY_ENTER && _page == HomePage::FIRST) {
+      if (_task->getUnreadMsgCount() > 0) {
+        _task->gotoMsgPreview();
+        return true;
+      }
+      if (_task->getLogCount() > 0) {
+        _task->gotoMsgHistory();
+        return true;
+      }
+      return false;
+    }
     return false;
   }
 };
@@ -1029,8 +1044,15 @@ public:
 
   MsgPreviewScreen(UITask* task, mesh::RTCClock* rtc) : _task(task), _rtc(rtc) { num_unread = 0; }
 
+  #define MAX_LOG_MSGS  16
+  bool _in_history  = false;
+  int  _hist_cursor = 0;
+
 private:
   MsgEntry unread[MAX_UNREAD_MSGS];
+  MsgEntry _log[MAX_LOG_MSGS];
+  int _log_head  = 0;
+  int _log_count = 0;
 
   int indexFromNewest(int offset) const {
     return (head - offset + MAX_UNREAD_MSGS) % MAX_UNREAD_MSGS;
@@ -1053,7 +1075,14 @@ public:
     p->from_name[sizeof(p->from_name) - 1] = '\0';
     StrHelper::strncpy(p->msg, msg, sizeof(p->msg));
     pushEntry(entry);
+    _log[_log_head] = entry;
+    _log_head = (_log_head + 1) % MAX_LOG_MSGS;
+    if (_log_count < MAX_LOG_MSGS) _log_count++;
+    _in_history = false;  // new message interrupts history browse
   }
+
+  int  logCount()       const { return _log_count; }
+  void enterHistoryMode()     { _in_history = true; _hist_cursor = 0; }
 
   // Peek at the current (latest) unread message without consuming it
   const MsgEntry* peekCurrent() const {
@@ -1104,6 +1133,61 @@ public:
   int unreadCount() const { return num_unread; }
 
   int render(DisplayDriver& display) override {
+    if (_in_history) {
+      if (_log_count == 0) { _in_history = false; return 1000; }
+      int idx = (_log_head - _log_count + _hist_cursor + MAX_LOG_MSGS * 2) % MAX_LOG_MSGS;
+      const MsgEntry* p = &_log[idx];
+
+      int hdr_size   = (display.width() >= 200) ? 2 : 1;
+      int hdr_line_h = 8 * hdr_size;
+      int msg_start_y = hdr_line_h + 3;
+
+      char filtered_msg[MAX_TEXT_LEN];
+      display.translateUTF8ToBlocks(filtered_msg, p->msg, sizeof(filtered_msg));
+
+      char time_str[8];
+      int secs = (int)(_rtc->getCurrentTime() - p->timestamp);
+      if (secs < 0) secs = 0;
+      if      (secs < 60)   snprintf(time_str, sizeof(time_str), "%ds",  secs);
+      else if (secs < 3600) snprintf(time_str, sizeof(time_str), "%dm",  secs / 60);
+      else                  snprintf(time_str, sizeof(time_str), "%dh",  secs / 3600);
+
+      int hdr_ch_w    = 6 * hdr_size;
+      int hdr_total   = display.width() / hdr_ch_w;
+      int name_budget = hdr_total - (int)strlen(time_str) - 6; // "[N/M] " prefix
+      if (name_budget < 0) name_budget = 0;
+
+      char raw_name[36];
+      if (p->path_len == 0xFF)
+        snprintf(raw_name, sizeof(raw_name), "(D)%s", p->from_name);
+      else
+        snprintf(raw_name, sizeof(raw_name), "[%d]%s", p->path_len, p->from_name);
+      if (name_budget < (int)sizeof(raw_name)) raw_name[name_budget] = '\0';
+
+      char filtered_name[36];
+      display.translateUTF8ToBlocks(filtered_name, raw_name, sizeof(filtered_name));
+
+      char hdr_left[64];
+      snprintf(hdr_left, sizeof(hdr_left), "#%d/%d %s",
+               _hist_cursor + 1, _log_count, filtered_name);
+
+      display.setTextSize(hdr_size);
+      display.setColor(DisplayDriver::YELLOW);
+      display.setCursor(0, 0);
+      display.print(hdr_left);
+      int time_x = display.width() - 1 - (int)strlen(time_str) * hdr_ch_w;
+      display.setCursor(time_x, 0);
+      display.print(time_str);
+
+      display.setColor(DisplayDriver::LIGHT);
+      display.drawRect(0, hdr_line_h + 2, display.width(), 1);
+
+      display.setTextSize(1);
+      display.setCursor(0, msg_start_y);
+      display.printWordWrap(filtered_msg, display.width());
+
+      return (AUTO_OFF_MILLIS == 0) ? 10000 : 1000;
+    }
     if (num_unread == 0) return 1000;
     auto* p = &unread[head];
 
@@ -1184,6 +1268,26 @@ public:
   }
 
   bool handleInput(char c) override {
+    if (_in_history) {
+      if (c == KEY_NEXT || c == KEY_RIGHT) {
+        _hist_cursor++;
+        if (_hist_cursor >= _log_count) {
+          _in_history = false;
+          _task->gotoHomeScreen();
+        }
+        return true;
+      }
+      if (c == KEY_PREV || c == KEY_LEFT) {
+        if (_hist_cursor > 0) _hist_cursor--;
+        return true;
+      }
+      if (c == KEY_ENTER) {
+        _in_history = false;
+        _task->gotoHomeScreen();
+        return true;
+      }
+      return false;
+    }
     if (c == KEY_NEXT || c == KEY_RIGHT) {
       head = (head + MAX_UNREAD_MSGS - 1) % MAX_UNREAD_MSGS;
       num_unread--;
@@ -1193,7 +1297,6 @@ public:
       return true;
     }
     if (c == KEY_ENTER) {
-      num_unread = 0;  // clear unread queue
       _task->gotoHomeScreen();
       return true;
     }
@@ -1347,6 +1450,17 @@ void UITask::consumeTopMsg() {
 int UITask::getUnreadMsgCount() const {
   if (!msg_preview) return 0;
   return ((MsgPreviewScreen*)msg_preview)->unreadCount();
+}
+
+int UITask::getLogCount() const {
+  if (!msg_preview) return 0;
+  return ((MsgPreviewScreen*)msg_preview)->logCount();
+}
+
+void UITask::gotoMsgHistory() {
+  if (!msg_preview) return;
+  ((MsgPreviewScreen*)msg_preview)->enterHistoryMode();
+  setCurrScreen(msg_preview);
 }
 
 void UITask::userLedHandler() {

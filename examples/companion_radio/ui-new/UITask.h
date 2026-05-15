@@ -74,6 +74,7 @@ public:
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
 
   void gotoHomeScreen() { setCurrScreen(home); }
+  void gotoMsgPreview() { if (getUnreadMsgCount() > 0) setCurrScreen(msg_preview); }
   void showAlert(const char* text, int duration_millis);
   int  getMsgCount() const { return _msgcount; }
   bool hasDisplay() const { return _display != NULL; }
@@ -89,6 +90,8 @@ public:
   bool peekTopMsg(ClockPMInfo& out) const;
   void consumeTopMsg();
   int  getUnreadMsgCount() const;
+  int  getLogCount() const;
+  void gotoMsgHistory();
 
   void setClockDimMode(int m);
   int  getClockDimMode() const { return _clock_dim_mode; }
