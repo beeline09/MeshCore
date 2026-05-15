@@ -1,3 +1,39 @@
+# south_edition — Extended Companion Radio Fork
+
+> **Branch:** `south_edition` &nbsp;|&nbsp; **Base:** [MeshCore](https://github.com/ripplebiz/MeshCore) by Liam Cottle &nbsp;|&nbsp; **Wiki:** [south_edition docs](../../wiki)
+
+This fork extends MeshCore's **companion radio** firmware with features for real-world field deployment: unified transport switching, advanced CLI, improved display support, and stability fixes for NRF52 and ESP32 platforms.
+
+## What's different in south_edition
+
+**One firmware, three transports** — `_uni` builds support BLE, WiFi (TCP), and USB in a single binary. Switch at runtime via the Settings menu or CLI — no reflashing required.
+
+**Companion CLI** — control the node remotely via PM (Remote CLI) or a dedicated TerminalCLI channel. Full command set: radio params, BLE PIN, WiFi networks, time sync, GPS, power management.
+
+**Extended display support** — adaptive UI for OLED, eInk (E213, E290, Wireless Paper, GxEPD2) and color TFT (Heltec T114 / ST7789). Clock page with time sync, date, and configurable dimming. Anti-ghosting strategy for eInk (periodic full refresh + clean power-off).
+
+**Cyr2Lat** — optional Cyrillic-to-Latin transliteration for channel names, contacts and room-server names on displays.
+
+**NRF52 stability** — deferred flash writes avoid BLE/flash deadlock on S140; reboot deferred until BLE disconnects; stack overflow fixes in Remote CLI.
+
+**BLE PIN management** — auto mode (new random PIN each boot) or fixed custom PIN, persisted in prefs. Manageable via CLI (`set ble.pin`) or companion app.
+
+## Firmware variants
+
+| Suffix | Transport | Platforms |
+|--------|-----------|-----------|
+| `_companion_radio_uni` | BLE + WiFi + USB (runtime switch) | ESP32 / ESP32-S3 |
+| `_companion_radio_ble` | BLE only | NRF52 (T114, ProMicro) |
+
+Pre-built binaries are attached to each [release tag](../../releases).
+
+## Resources
+
+- [Wiki — full documentation](../../wiki) — CLI reference, WiFi switching, display setup, release notes
+- [Release notes](../../wiki/releases-companion) — changelog per beta tag
+
+---
+
 ## About MeshCore
 
 MeshCore is a lightweight, portable C++ library that enables multi-hop packet routing for embedded projects using LoRa and other packet radios. It is designed for developers who want to create resilient, decentralized communication networks that work without the internet.
