@@ -2002,7 +2002,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     // ensure pin is zero, or a valid 6 digit pin
     if (pin == 0 || (pin >= 100000 && pin <= 999999)) {
       _prefs.ble_pin = pin;
-      _active_ble_pin = pin;   // update display immediately; BLE restart (reboot) needed to enforce
+      if (pin != 0) _active_ble_pin = pin;  // don't zero out display — pin unchanged until reboot
       dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
       writeOKFrame();
     } else {
@@ -2683,19 +2683,28 @@ int MyMesh::mapCyr2LatChannelRawLog(const uint8_t* raw, int len, uint8_t* mapped
 
 bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool is_remote) {
   if (strcmp(cmd, "pin") == 0) {
-    snprintf(buf, 512, "CLI PIN: %s  BLE PIN: %06lu", _cli_pin, (unsigned long)_prefs.ble_pin);
+    if (_prefs.ble_pin == 0)
+      snprintf(buf, 512, "CLI PIN: %s  BLE PIN: %06lu (auto, new random on reboot)", _cli_pin, (unsigned long)_active_ble_pin);
+    else
+      snprintf(buf, 512, "CLI PIN: %s  BLE PIN: %06lu", _cli_pin, (unsigned long)_prefs.ble_pin);
 
   } else if (strcmp(cmd, "get ble.pin") == 0) {
-    snprintf(buf, 512, "ble.pin: %06lu", (unsigned long)_prefs.ble_pin);
+    if (_prefs.ble_pin == 0)
+      snprintf(buf, 512, "ble.pin: auto (current session: %06lu)", (unsigned long)_active_ble_pin);
+    else
+      snprintf(buf, 512, "ble.pin: %06lu", (unsigned long)_prefs.ble_pin);
   } else if (strncmp(cmd, "set ble.pin ", 12) == 0) {
     uint32_t pin = (uint32_t)atol(cmd + 12);
     if (pin == 0 || (pin >= 100000 && pin <= 999999)) {
       _prefs.ble_pin = pin;
-      _active_ble_pin = pin;
+      if (pin != 0) _active_ble_pin = pin;  // don't zero out display — pin unchanged until reboot
       dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
-      snprintf(buf, 512, "ble.pin: %06lu (reboot to apply)", (unsigned long)pin);
+      if (pin == 0)
+        strcpy(buf, "ble.pin: auto (new random on reboot)");
+      else
+        snprintf(buf, 512, "ble.pin: %06lu (reboot to apply)", (unsigned long)pin);
     } else {
-      strcpy(buf, "ERR: pin must be 0 (auto) or 100000–999999");
+      strcpy(buf, "ERR: pin must be 0 (auto/random) or 100000-999999");
     }
 
   } else if (strcmp(cmd, "timesync") == 0) {
