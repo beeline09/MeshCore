@@ -90,8 +90,8 @@
 |---------|---------|
 | `wifi list` | список сохранённых сетей с индексами |
 | `wifi scan` | сканирование эфира (блокирующий, ~2 с) |
-| `wifi add <ssid> <pass>` | добавить/обновить сеть (макс. 5) |
-| `wifi del <ssid>` | удалить сеть |
+| `wifi add <ssid> <pass>` | добавить/обновить сеть (макс. 5); SSID/пароль с пробелами — в кавычках: `wifi add "My Network" "my pass"` |
+| `wifi del <ssid>` | удалить сеть; кавычки поддерживаются: `wifi del "My Network"` |
 | `wifi connect <idx>` | подключиться к сети по индексу из `wifi list` |
 | `wifi status` | текущий режим, IP, порт |
 | `wifi ip dhcp` | режим DHCP |
