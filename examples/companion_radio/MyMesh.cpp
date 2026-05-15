@@ -2832,7 +2832,27 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
 
   } else if (strncmp(cmd, "wifi add ", 9) == 0) {
     char ssid[33] = {}, pass[65] = {};
-    if (sscanf(cmd + 9, "%32s %64s", ssid, pass) >= 1) {
+    const char* p = cmd + 9;
+    // Parse SSID: quoted ("My Network") or plain (NoSpaces)
+    if (*p == '"') {
+      p++;
+      int i = 0;
+      while (*p && *p != '"' && i < 32) ssid[i++] = *p++;
+      if (*p == '"') p++;
+    } else {
+      int i = 0;
+      while (*p && *p != ' ' && i < 32) ssid[i++] = *p++;
+    }
+    while (*p == ' ') p++;
+    // Parse password: quoted or plain (rest of string)
+    if (*p == '"') {
+      p++;
+      int i = 0;
+      while (*p && *p != '"' && i < 64) pass[i++] = *p++;
+    } else {
+      strncpy(pass, p, 64);
+    }
+    if (ssid[0]) {
       if (_wifi_prefs.network_count >= WIFI_MAX_NETWORKS) {
         strcpy(buf, "ERR: max 5 networks stored");
       } else {
@@ -2840,11 +2860,19 @@ bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool i
         snprintf(buf, 512, "wifi: saved [%s]", ssid);
       }
     } else {
-      strcpy(buf, "Usage: wifi add <ssid> <password>");
+      strcpy(buf, "Usage: wifi add <ssid> [password]\n  Quotes for spaces: wifi add \"My Network\" \"my pass\"");
     }
 
   } else if (strncmp(cmd, "wifi del ", 9) == 0) {
-    const char* ssid = cmd + 9;
+    const char* p = cmd + 9;
+    char ssid[33] = {};
+    if (*p == '"') {
+      p++;
+      int i = 0;
+      while (*p && *p != '"' && i < 32) ssid[i++] = *p++;
+    } else {
+      strncpy(ssid, p, 32);
+    }
     removeWifiNetwork(ssid);
     snprintf(buf, 512, "wifi: removed [%s] (if existed)", ssid);
 
