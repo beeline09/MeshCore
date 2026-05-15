@@ -3134,7 +3134,7 @@ void MyMesh::initCommsFromPrefs() {
     } else {
       StdRNG rng;
       _active_ble_pin = rng.nextInt(100000, 999999);
-      _prefs.ble_pin = _active_ble_pin;
+      // auto mode: new random each boot, not persisted
     }
   }
   _ble_iface.begin(BLE_NAME_PREFIX, _prefs.node_name, _active_ble_pin);
