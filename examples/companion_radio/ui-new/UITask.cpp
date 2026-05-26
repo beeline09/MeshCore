@@ -331,13 +331,24 @@ public:
       return 60000;
     }
 
-    // node name
+    // header: node name, or time source on eink clock page
     display.setTextSize(hdr_size);
     display.setColor(DisplayDriver::GREEN);
-    char filtered_name[sizeof(_node_prefs->node_name)];
-    display.translateUTF8ToBlocks(filtered_name, _node_prefs->node_name, sizeof(filtered_name));
-    display.setCursor(0, 0);
-    display.print(filtered_name);
+    if (_page == HomePage::CLOCK && _task->isEinkDisplay()) {
+      char srcBuf[40];
+      snprintf(srcBuf, sizeof(srcBuf), "%s", the_mesh.getTimeSourceLabel());
+      if (the_mesh.getTimeSyncCount() > 0 && the_mesh.getTimeSource() == MyMesh::TIME_SOURCE_ADVERT) {
+        snprintf(srcBuf, sizeof(srcBuf), "%s %+lds",
+                 the_mesh.getTimeSourceLabel(), (long)the_mesh.getTimeLastAdjustment());
+      }
+      display.setCursor(0, 0);
+      display.print(srcBuf);
+    } else {
+      char filtered_name[sizeof(_node_prefs->node_name)];
+      display.translateUTF8ToBlocks(filtered_name, _node_prefs->node_name, sizeof(filtered_name));
+      display.setCursor(0, 0);
+      display.print(filtered_name);
+    }
 
     // battery voltage
     renderBatteryIndicator(display, _task->getBattMilliVolts());
@@ -415,17 +426,19 @@ public:
       if (_task->isEinkDisplay()) {
         char dateBuf[12];
         strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
-        // Auto-scale: "HH:MM" = 5 chars × 6px/unit; leave 22px at bottom for date+source
-        int clock_sz = min(display.width() / 30, (display.height() - 22) / 8);
+        // source is shown in the header; reserve bottom for date at hdr_size
+        int date_sz = hdr_size;
+        int bottom_reserve = 8 * date_sz + 4;
+        int usable_h = display.height() - bottom_reserve - content_y;
+        int clock_sz = min(display.width() / 30, usable_h / 8);
         if (clock_sz < 1) clock_sz = 1;
         if (clock_sz > 8) clock_sz = 8;
-        int clock_y = (display.height() - 22 - 8 * clock_sz) / 2;
-        if (clock_y < 0) clock_y = 0;
+        int clock_h = 8 * clock_sz;
+        int clock_y = content_y + (usable_h - clock_h) / 2;
         display.setTextSize(clock_sz);
         display.drawTextCentered(display.width() / 2, clock_y, timeBuf);
-        display.setTextSize(1);
-        display.drawTextCentered(display.width() / 2, display.height() - 20, dateBuf);
-        display.drawTextCentered(display.width() / 2, display.height() - 10, sourceBuf);
+        display.setTextSize(date_sz);
+        display.drawTextCentered(display.width() / 2, display.height() - bottom_reserve, dateBuf);
       } else if (_task->isColorTFTDisplay()) {
         char dateBuf[12];
         strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
