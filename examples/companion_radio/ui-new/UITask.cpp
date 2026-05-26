@@ -331,9 +331,15 @@ public:
       return 60000;
     }
 
-    // header: node name, or time source on eink clock page
+    // node name
     display.setTextSize(hdr_size);
     display.setColor(DisplayDriver::GREEN);
+    char filtered_name[sizeof(_node_prefs->node_name)];
+    display.translateUTF8ToBlocks(filtered_name, _node_prefs->node_name, sizeof(filtered_name));
+    display.setCursor(0, 0);
+    display.print(filtered_name);
+
+    // on eink clock page: time sync source right-aligned next to battery
     if (_page == HomePage::CLOCK && _task->isEinkDisplay()) {
       char srcBuf[40];
       snprintf(srcBuf, sizeof(srcBuf), "%s", the_mesh.getTimeSourceLabel());
@@ -341,13 +347,9 @@ public:
         snprintf(srcBuf, sizeof(srcBuf), "%s %+lds",
                  the_mesh.getTimeSourceLabel(), (long)the_mesh.getTimeLastAdjustment());
       }
-      display.setCursor(0, 0);
-      display.print(srcBuf);
-    } else {
-      char filtered_name[sizeof(_node_prefs->node_name)];
-      display.translateUTF8ToBlocks(filtered_name, _node_prefs->node_name, sizeof(filtered_name));
-      display.setCursor(0, 0);
-      display.print(filtered_name);
+      display.setTextSize(1);
+      display.drawTextRightAlign(display.width() - 32, 0, srcBuf);
+      display.setTextSize(hdr_size);
     }
 
     // battery voltage
