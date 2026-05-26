@@ -426,19 +426,17 @@ public:
       if (_task->isEinkDisplay()) {
         char dateBuf[12];
         strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
-        // source is shown in the header; reserve bottom for date at hdr_size
+        // source shown in header; date uses hdr_size for readability on wide displays
         int date_sz = hdr_size;
-        int bottom_reserve = 8 * date_sz + 4;
-        int usable_h = display.height() - bottom_reserve - content_y;
-        int clock_sz = min(display.width() / 30, usable_h / 8);
+        int clock_sz = min(display.width() / 30, (display.height() - 22) / 8);
         if (clock_sz < 1) clock_sz = 1;
         if (clock_sz > 8) clock_sz = 8;
-        int clock_h = 8 * clock_sz;
-        int clock_y = content_y + (usable_h - clock_h) / 2;
+        int clock_y = (display.height() - 22 - 8 * clock_sz) / 2;
+        if (clock_y < content_y) clock_y = content_y;  // don't overlap page dots
         display.setTextSize(clock_sz);
         display.drawTextCentered(display.width() / 2, clock_y, timeBuf);
         display.setTextSize(date_sz);
-        display.drawTextCentered(display.width() / 2, display.height() - bottom_reserve, dateBuf);
+        display.drawTextCentered(display.width() / 2, display.height() - 20, dateBuf);
       } else if (_task->isColorTFTDisplay()) {
         char dateBuf[12];
         strftime(dateBuf, sizeof(dateBuf), "%a %d %b", &timeinfo);
