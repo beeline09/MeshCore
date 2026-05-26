@@ -362,7 +362,8 @@ void SerialBLEInterface::onBleUartRX(uint16_t conn_handle) {
     return;
   }
   
-  if (instance->_conn_handle != conn_handle || !instance->isConnected()) {
+  if (instance->_conn_handle != conn_handle) {
+    BLE_DEBUG_PRINTLN("onBleUartRX: discarding data from wrong handle %u (expected %u)", conn_handle, instance->_conn_handle);
     while (instance->bleuart.available() > 0) {
       instance->bleuart.read();
     }

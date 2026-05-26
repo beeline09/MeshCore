@@ -22,11 +22,16 @@
 #endif
 
 bool GxEPDDisplay::begin() {
-  display.epd2.selectSPI(SPI1, SPISettings(4000000, MSBFIRST, SPI_MODE0));
-#ifdef ESP32
-  SPI1.begin(PIN_DISPLAY_SCLK, PIN_DISPLAY_MISO, PIN_DISPLAY_MOSI, PIN_DISPLAY_CS);
+#ifdef EINK_SHARED_SPI
+  // Radio driver already called SPI.begin() with the correct pins; reuse the bus.
+  display.epd2.selectSPI(SPI, SPISettings(4000000, MSBFIRST, SPI_MODE0));
 #else
-  SPI1.begin();
+  display.epd2.selectSPI(SPI1, SPISettings(4000000, MSBFIRST, SPI_MODE0));
+  #ifdef ESP32
+    SPI1.begin(PIN_DISPLAY_SCLK, PIN_DISPLAY_MISO, PIN_DISPLAY_MOSI, PIN_DISPLAY_CS);
+  #else
+    SPI1.begin();
+  #endif
 #endif
   display.init(115200, true, 2, false);
   display.setRotation(DISPLAY_ROTATION);

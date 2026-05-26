@@ -1,6 +1,6 @@
 /*
- * variant.h - ProMicro NRF52840 + WeAct Epaper 2.13" + E22/E22P
- * Pin-to-GPIO mapping is identical to the promicro variant (same MCU).
+ * variant.h - ProMicro NRF52840 + WeAct Epaper 2.13" + E22/E22P/RA-62
+ * Shared SPI bus (D12/D14/D15) for both radio and e-ink display.
  */
 
 #pragma once
@@ -33,10 +33,10 @@
 #define NUM_ANALOG_OUTPUTS   (0)
 
 ////////////////////////////////////////////////////////////////////////////////
-// UART pin definition
+// UART pin definition (required by framework Uart.cpp even if Serial1 is unused)
 
-#define PIN_SERIAL1_TX       (20)
-#define PIN_SERIAL1_RX       (18)
+#define PIN_SERIAL1_TX       (1)   // D1 = P0.06 (free)
+#define PIN_SERIAL1_RX       (0)   // D0 = P0.08 (free)
 
 ////////////////////////////////////////////////////////////////////////////////
 // I2C pin definition (defined for compatibility but Wire not used in this variant)
@@ -48,21 +48,16 @@
 
 ////////////////////////////////////////////////////////////////////////////////
 // SPI pin definition
-// Note: main SPI pins are overridden at runtime via SPI.setPins() by CustomSX1262
-// using P_LORA_SCLK/MOSI/MISO defined in PromicroEinkBoard.h (D3/D4/D5).
-// SPI1 (D0/D19/D1) is used for the e-ink display.
+// Single shared SPI bus for radio (E22/E22P/RA-62) and e-ink display.
+// Pins are set at runtime via SPI.setPins() in CustomSX1262/CustomLLCC68::std_init().
 
-#define SPI_INTERFACES_COUNT 2
+#define SPI_INTERFACES_COUNT 1
 
-#define PIN_SPI_SCK          (3)
-#define PIN_SPI_MISO         (5)
-#define PIN_SPI_MOSI         (4)
+#define PIN_SPI_SCK          (12)   // D12 = P1.11
+#define PIN_SPI_MISO         (15)   // D15 = P0.02
+#define PIN_SPI_MOSI         (14)   // D14 = P1.15
 
-#define PIN_SPI_NSS          (16)
-
-#define PIN_SPI1_SCK         (0)
-#define PIN_SPI1_MISO        (19)
-#define PIN_SPI1_MOSI        (1)
+#define PIN_SPI_NSS          (13)   // D13 = P1.13 (radio CS)
 
 ////////////////////////////////////////////////////////////////////////////////
 // Builtin LEDs
@@ -76,7 +71,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 // Builtin buttons
 
-#define PIN_BUTTON1          (6)
+#define PIN_BUTTON1          (6)    // D6 = P1.00 — KEY SELECT
 #define BUTTON_PIN           PIN_BUTTON1
 
 // GxEPD2 requires SCK/MISO/MOSI globals (used by GxEPD2_1248c which is compiled

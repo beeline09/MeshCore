@@ -42,12 +42,10 @@ class CustomLLCC68 : public LLCC68 {
       if (spi) spi->begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
     #endif
   #endif
+      // LLCC68 constructor sets XTAL=true, but RA-62 and similar modules use a TCXO on DIO3.
+      // When tcxo > 0, force XTAL=false so RadioLib calls setTCXO() in modSetup().
+      if (tcxo > 0.0f) { this->XTAL = false; }
       int status = begin(LORA_FREQ, LORA_BW, LORA_SF, cr, RADIOLIB_SX126X_SYNC_WORD_PRIVATE, LORA_TX_POWER, 16, tcxo);
-      // if radio init fails with -707/-706, try again with tcxo voltage set to 0.0f
-      if (status == RADIOLIB_ERR_SPI_CMD_FAILED || status == RADIOLIB_ERR_SPI_CMD_INVALID) {
-        tcxo = 0.0f;
-        status = begin(LORA_FREQ, LORA_BW, LORA_SF, cr, RADIOLIB_SX126X_SYNC_WORD_PRIVATE, LORA_TX_POWER, 16, tcxo);
-      }
       if (status != RADIOLIB_ERR_NONE) {
         Serial.print("ERROR: radio init failed: ");
         Serial.println(status);
