@@ -14,7 +14,7 @@
 #endif
 
 #ifndef EINK_FULL_REFRESH_INTERVAL
-  #define EINK_FULL_REFRESH_INTERVAL  20
+  #define EINK_FULL_REFRESH_INTERVAL  40
 #endif
 
 #ifdef ESP32
@@ -202,9 +202,15 @@ void GxEPDDisplay::endFrame() {
   uint32_t crc = display_crc.finalize();
   if (crc != last_display_crc_value) {
     last_display_crc_value = crc;
-    if (++_partial_refresh_count >= EINK_FULL_REFRESH_INTERVAL) {
-      display.display(false);  // full refresh
+    bool do_full = (++_partial_refresh_count >= EINK_FULL_REFRESH_INTERVAL) && !_suppress_full_refresh;
+    if (do_full) {
+      display.display(false);  // full refresh (deghost)
       _partial_refresh_count = 0;
+      // SSD1680 requires one partial cycle after full refresh to transition the
+      // controller into partial-update mode. Without this, the first few partial
+      // updates after deghosting show low contrast or overlap with the old frame.
+      // The buffer hasn't changed, so this is a zero-diff partial — no visible flicker.
+      display.display(true);
     } else {
       display.display(true);   // partial refresh
     }

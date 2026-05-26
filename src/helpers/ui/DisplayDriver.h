@@ -19,6 +19,7 @@ public:
 
   virtual bool isEink() const { return false; }
   virtual bool isColorTFT() const { return false; }
+  virtual void setFullRefreshSuppressed(bool s) {}
   virtual bool isOn() = 0;
   virtual void turnOn() = 0;
   virtual void turnOff() = 0;

@@ -1157,6 +1157,24 @@ public:
 
       char filtered_msg[MAX_TEXT_LEN];
       display.translateUTF8ToBlocks(filtered_msg, p->msg, sizeof(filtered_msg));
+      int msg_len = (int)strlen(filtered_msg);
+
+      int body2_lines = (display.height() - msg_start_y) / 16;
+      int body2_cpl   = display.width() / 12;
+      int sim_lines = 0;
+      if (body2_lines >= 4) {
+        int pos = 0;
+        while (pos < msg_len) {
+          sim_lines++;
+          if (msg_len - pos <= body2_cpl) break;
+          int brk = pos + body2_cpl;
+          for (int i = pos + body2_cpl; i > pos; i--) {
+            if (filtered_msg[i] == ' ') { brk = i; break; }
+          }
+          pos = brk + (filtered_msg[brk] == ' ' ? 1 : 0);
+        }
+      }
+      int body_size = ((body2_lines >= 4) && (sim_lines <= body2_lines)) ? 2 : 1;
 
       char time_str[8];
       int secs = (int)(_rtc->getCurrentTime() - p->timestamp);
@@ -1195,7 +1213,7 @@ public:
       display.setColor(DisplayDriver::LIGHT);
       display.drawRect(0, hdr_line_h + 2, display.width(), 1);
 
-      display.setTextSize(1);
+      display.setTextSize(body_size);
       display.setCursor(0, msg_start_y);
       display.printWordWrap(filtered_msg, display.width());
 
@@ -1637,6 +1655,8 @@ void UITask::loop() {
       } else {
         _next_refresh = millis() + delay_millis;
       }
+      if (_display->isEink() && home)
+        _display->setFullRefreshSuppressed(((HomeScreen*)home)->isOnClockPage());
       _display->endFrame();
     }
 #if AUTO_OFF_MILLIS > 0
