@@ -83,9 +83,10 @@ public:
   bool isButtonPressed() const;
 
   struct ClockPMInfo {
-    uint8_t path_len;
-    char    from_name[32];
-    char    msg[10 * CIPHER_BLOCK_SIZE];
+    uint8_t  path_len;
+    uint32_t timestamp;
+    char     from_name[32];
+    char     msg[10 * CIPHER_BLOCK_SIZE];
   };
   bool peekTopMsg(ClockPMInfo& out) const;
   void consumeTopMsg();

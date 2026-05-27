@@ -295,10 +295,17 @@ public:
         }
         int body_size = ((body2_lines >= 4) && (sim_lines <= body2_lines)) ? 2 : 1;
 
-        // Header: "#N (D)name" or "#N [hops]name"
+        // Header: "#N (D)name" + time elapsed top-right
+        char time_str[8];
+        int secs = (int)(_rtc->getCurrentTime() - info.timestamp);
+        if (secs < 0) secs = 0;
+        if      (secs < 60)   snprintf(time_str, sizeof(time_str), "%ds",  secs);
+        else if (secs < 3600) snprintf(time_str, sizeof(time_str), "%dm",  secs / 60);
+        else                  snprintf(time_str, sizeof(time_str), "%dh",  secs / 3600);
+
         int hdr_ch_w    = 6 * hdr_size;
         int hdr_total   = display.width() / hdr_ch_w;
-        int name_budget = hdr_total - 4;   // "#N " + gap
+        int name_budget = hdr_total - (int)strlen(time_str) - 4;  // "#N " + gap
         if (name_budget < 0) name_budget = 0;
 
         char raw_name[36];
@@ -318,6 +325,9 @@ public:
         display.setColor(DisplayDriver::GREEN);
         display.setCursor(0, 0);
         display.print(hdr_left);
+        int time_x = display.width() - 1 - (int)strlen(time_str) * hdr_ch_w;
+        display.setCursor(time_x, 0);
+        display.print(time_str);
 
         // Divider
         display.setColor(DisplayDriver::LIGHT);
@@ -923,17 +933,26 @@ public:
 #endif
     // Settings edit mode absorbs all navigation before standard page switching
     if (_page == HomePage::SETTINGS && _in_settings) {
-      if (c == KEY_LEFT || c == KEY_PREV) {
+      // CANCEL (long press) or PREV exits settings; LEFT cycles value (not exit)
+      if (c == KEY_CANCEL || c == KEY_PREV) {
         _in_settings = false;
         return true;
       }
-      if (c == KEY_NEXT || c == KEY_RIGHT) {
+      // UP = previous item
+      if (c == KEY_UP) {
+        _settings_sel = (_settings_sel + SETTINGS_N - 1) % SETTINGS_N;
+        if (_settings_sel < _settings_scroll) _settings_scroll = _settings_sel;
+        return true;
+      }
+      // RIGHT / NEXT / DOWN = next item
+      if (c == KEY_NEXT || c == KEY_RIGHT || c == KEY_DOWN) {
         _settings_sel = (_settings_sel + 1) % SETTINGS_N;
         if (_settings_sel == 0) _settings_scroll = 0;
         else if (_settings_sel >= _settings_scroll + _settings_visible) _settings_scroll = _settings_sel - _settings_visible + 1;
         return true;
       }
-      if (c == KEY_ENTER) {
+      // ENTER or LEFT = activate / cycle value of current item
+      if (c == KEY_ENTER || c == KEY_LEFT) {
         if (_settings_sel == SETTINGS_BACK_IDX) {
           _in_settings = false;
         } else if (_settings_sel == SETTINGS_PM_IDX) {
@@ -973,7 +992,7 @@ public:
       return true;  // absorb all other keys in edit mode
     }
 
-    if (c == KEY_LEFT || c == KEY_PREV) {
+    if (c == KEY_LEFT || c == KEY_PREV || c == KEY_UP) {
       _page = (_page + HomePage::Count - 1) % HomePage::Count;
       return true;
     }
@@ -1308,11 +1327,11 @@ public:
         }
         return true;
       }
-      if (c == KEY_PREV || c == KEY_LEFT) {
+      if (c == KEY_PREV || c == KEY_LEFT || c == KEY_UP) {
         if (_hist_cursor > 0) _hist_cursor--;
         return true;
       }
-      if (c == KEY_ENTER) {
+      if (c == KEY_ENTER || c == KEY_CANCEL) {
         _in_history = false;
         _task->gotoHomeScreen();
         return true;
@@ -1327,7 +1346,7 @@ public:
       }
       return true;
     }
-    if (c == KEY_ENTER) {
+    if (c == KEY_ENTER || c == KEY_CANCEL) {
       _task->gotoHomeScreen();
       return true;
     }
@@ -1471,7 +1490,8 @@ bool UITask::peekTopMsg(ClockPMInfo& out) const {
   if (!msg_preview) return false;
   const MsgPreviewScreen::MsgEntry* p = ((MsgPreviewScreen*)msg_preview)->peekLatestPM();
   if (!p) return false;
-  out.path_len = p->path_len;
+  out.path_len  = p->path_len;
+  out.timestamp = p->timestamp;
   strncpy(out.from_name, p->from_name, sizeof(out.from_name) - 1);
   out.from_name[sizeof(out.from_name) - 1] = '\0';
   strncpy(out.msg, p->msg, sizeof(out.msg) - 1);
@@ -1563,27 +1583,27 @@ bool UITask::isButtonPressed() const {
 void UITask::loop() {
   char c = 0;
 #if UI_HAS_JOYSTICK
+  // SELECT (D6): short=enter/confirm, long=back/cancel
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
     c = checkDisplayOn(KEY_ENTER);
   } else if (ev == BUTTON_EVENT_LONG_PRESS) {
-    c = handleLongPress(KEY_ENTER);  // REVISIT: could be mapped to different key code
+    c = handleLongPress(KEY_CANCEL);
   }
+  // LEFT (D3): page left
   ev = joystick_left.check();
   if (ev == BUTTON_EVENT_CLICK) {
     c = checkDisplayOn(KEY_LEFT);
-  } else if (ev == BUTTON_EVENT_LONG_PRESS) {
-    c = handleLongPress(KEY_LEFT);
   }
+  // RIGHT (D4): page right
   ev = joystick_right.check();
   if (ev == BUTTON_EVENT_CLICK) {
     c = checkDisplayOn(KEY_RIGHT);
-  } else if (ev == BUTTON_EVENT_LONG_PRESS) {
-    c = handleLongPress(KEY_RIGHT);
   }
+  // UP (D5): navigate up / previous item
   ev = back_btn.check();
-  if (ev == BUTTON_EVENT_TRIPLE_CLICK) {
-    c = handleTripleClick(KEY_SELECT);
+  if (ev == BUTTON_EVENT_CLICK) {
+    c = checkDisplayOn(KEY_UP);
   }
 #elif defined(PIN_USER_BTN)
   int ev = user_btn.check();

@@ -204,13 +204,14 @@ void GxEPDDisplay::endFrame() {
     last_display_crc_value = crc;
     bool do_full = (++_partial_refresh_count >= EINK_FULL_REFRESH_INTERVAL) && !_suppress_full_refresh;
     if (do_full) {
-      display.display(false);  // full refresh (deghost)
+      display.display(false);  // full refresh (deghost); writeImageAgain() syncs 0x26=0x24
       _partial_refresh_count = 0;
-      // SSD1680 requires one partial cycle after full refresh to transition the
-      // controller into partial-update mode. Without this, the first few partial
-      // updates after deghosting show low contrast or overlap with the old frame.
-      // The buffer hasn't changed, so this is a zero-diff partial — no visible flicker.
-      display.display(true);
+      // SSD1680 requires a controller re-initialisation after full refresh before partial
+      // updates work correctly (WeAct reference: Epaper_Initial_partial = HW RST + reinit).
+      // GxEPD2 hibernate() puts the panel in deep sleep; on next writeImage() call,
+      // _InitDisplay() sees _hibernating=true and performs the required hardware reset.
+      display.hibernate();
+      // _init stays true — begin() is NOT called, so SPI and framebuffer are preserved.
     } else {
       display.display(true);   // partial refresh
     }

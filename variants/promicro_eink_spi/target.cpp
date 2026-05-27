@@ -15,11 +15,15 @@ EnvironmentSensorManager sensors;
 
 #ifdef DISPLAY_CLASS
   DISPLAY_CLASS display;
-  MomentaryButton user_btn(KEY_SELECT, 1000, true, true);
   #if UI_HAS_JOYSTICK
-    MomentaryButton joystick_left(KEY_LEFT, 1000, true, true);
-    MomentaryButton joystick_right(KEY_RIGHT, 1000, true, true);
-    MomentaryButton back_btn(KEY_UP, 1000, true, true);
+    // SELECT (D6): long press = back/cancel. No multi-click wait for faster response.
+    MomentaryButton user_btn(KEY_SELECT, 1000, true, true, false);
+    // Direction buttons: no long press, no multi-click → near-instant CLICK events.
+    MomentaryButton joystick_left(KEY_LEFT, 0, true, true, false);
+    MomentaryButton joystick_right(KEY_RIGHT, 0, true, true, false);
+    MomentaryButton back_btn(KEY_UP, 0, true, true, false);
+  #else
+    MomentaryButton user_btn(KEY_SELECT, 1000, true, true);
   #endif
 #endif
 
