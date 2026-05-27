@@ -22,6 +22,9 @@ EnvironmentSensorManager sensors;
     MomentaryButton joystick_left(KEY_LEFT, 0, true, true, false);
     MomentaryButton joystick_right(KEY_RIGHT, 0, true, true, false);
     MomentaryButton back_btn(KEY_UP, 0, true, true, false);
+    // KEY_DOWN = D17 = P0.31, shared with battery ADC. Digital reads work fine
+    // alongside periodic analogRead(); the pin state is independent of SAADC.
+    MomentaryButton joystick_down(KEY_DOWN, 0, true, true, false);
   #else
     MomentaryButton user_btn(KEY_SELECT, 1000, true, true);
   #endif

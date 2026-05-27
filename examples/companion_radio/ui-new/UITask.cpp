@@ -948,17 +948,18 @@ public:
         }
         return true;
       }
-      // ● short (KEY_ENTER) = next item ↓, with wrap-around scroll
-      if (c == KEY_ENTER || c == KEY_NEXT || c == KEY_DOWN) {
+      // ↓ (KEY_DOWN) or KEY_NEXT = next item, with wrap-around scroll
+      if (c == KEY_DOWN || c == KEY_NEXT) {
         _settings_sel = (_settings_sel + 1) % SETTINGS_N;
         if (_settings_sel == 0) _settings_scroll = 0;
         else if (_settings_sel >= _settings_scroll + _settings_visible) _settings_scroll = _settings_sel - _settings_visible + 1;
         return true;
       }
-      // → (KEY_RIGHT) = cycle value forward  |  ← (KEY_LEFT) = cycle value backward
+      // → (KEY_RIGHT) or ● short (KEY_ENTER) = cycle value forward
+      // ← (KEY_LEFT) = cycle value backward
       // For binary items direction doesn't matter; for multi-value LEFT reverses.
-      if (c == KEY_RIGHT || c == KEY_LEFT) {
-        bool fwd = (c == KEY_RIGHT);
+      if (c == KEY_RIGHT || c == KEY_ENTER || c == KEY_LEFT) {
+        bool fwd = (c != KEY_LEFT);
         if (_settings_sel == SETTINGS_BACK_IDX) {
           _in_settings = false;
         } else if (_settings_sel == SETTINGS_PM_IDX) {
@@ -1004,7 +1005,7 @@ public:
       _page = (_page + HomePage::Count - 1) % HomePage::Count;
       return true;
     }
-    if (c == KEY_NEXT || c == KEY_RIGHT) {
+    if (c == KEY_NEXT || c == KEY_RIGHT || c == KEY_DOWN) {
       _page = (_page + 1) % HomePage::Count;
       return true;
     }
@@ -1612,6 +1613,11 @@ void UITask::loop() {
   ev = back_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
     c = checkDisplayOn(KEY_UP);
+  }
+  // DOWN (D17, shared with ADC): navigate down / next item
+  ev = joystick_down.check();
+  if (ev == BUTTON_EVENT_CLICK) {
+    c = checkDisplayOn(KEY_DOWN);
   }
 #elif defined(PIN_USER_BTN)
   int ev = user_btn.check();
