@@ -938,10 +938,15 @@ public:
         _in_settings = false;
         return true;
       }
-      // UP = previous item
+      // UP = previous item (with proper scroll-follow, including wrap-around)
       if (c == KEY_UP) {
         _settings_sel = (_settings_sel + SETTINGS_N - 1) % SETTINGS_N;
-        if (_settings_sel < _settings_scroll) _settings_scroll = _settings_sel;
+        if (_settings_sel == SETTINGS_N - 1) {
+          // wrapped from top to bottom: scroll to show last page
+          _settings_scroll = (SETTINGS_N > _settings_visible) ? (SETTINGS_N - _settings_visible) : 0;
+        } else if (_settings_sel < _settings_scroll) {
+          _settings_scroll = _settings_sel;
+        }
         return true;
       }
       // RIGHT / NEXT / DOWN = next item
