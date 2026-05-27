@@ -34,7 +34,14 @@ bool GxEPDDisplay::begin() {
   #endif
 #endif
   display.init(115200, true, 2, false);
-  display.setRotation(DISPLAY_ROTATION);
+  // Use stored _rotation (set via setRotation() before first turnOn()) or compile-time default.
+  display.setRotation(_rotation);
+  // Update logical dimensions to match the rotation now in effect.
+  {
+    bool is_landscape = (display.width() >= display.height());
+    _w = is_landscape ? _logical_long_dim  : _logical_short_dim;
+    _h = is_landscape ? _logical_short_dim : _logical_long_dim;
+  }
   setTextSize(1);  // Default to size 1
   display.setPartialWindow(0, 0, display.width(), display.height());
 
@@ -46,6 +53,20 @@ bool GxEPDDisplay::begin() {
   #endif
   _init = true;
   return true;
+}
+
+void GxEPDDisplay::setRotation(uint8_t r) {
+  _rotation = r;    // persist so begin() uses this value on next init
+  display.setRotation(r);
+  display.setPartialWindow(0, 0, display.width(), display.height());
+  // After rotation, physical width/height may have swapped.
+  // Use stored base dimensions (long/short) to compute the correct logical size.
+  bool is_landscape = (display.width() >= display.height());
+  _w = is_landscape ? _logical_long_dim  : _logical_short_dim;
+  _h = is_landscape ? _logical_short_dim : _logical_long_dim;
+  // Force a full refresh so the first frame after rotation is rendered cleanly.
+  _partial_refresh_count = EINK_FULL_REFRESH_INTERVAL;
+  last_display_crc_value = -1;
 }
 
 void GxEPDDisplay::turnOn() {

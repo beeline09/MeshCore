@@ -30,7 +30,7 @@
 #define KEY_RIGHT   4   // D4  = P0.22
 #define KEY_UP      5   // D5  = P0.24
 #define KEY_SELECT  6   // D6  = P1.00  (also PIN_BUTTON1 in variant.h)
-#define KEY_DOWN    17  // D17 = P0.31  (shared with battery ADC — no MomentaryButton)
+#define KEY_DOWN    7   // D7  = P0.11  (free GPIO, no conflicts)
 
 // Battery ADC on D17 = P0.31 (AIN7).
 // Requires external voltage divider: VBAT → 100kΩ → D17 → 100kΩ → GND.

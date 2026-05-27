@@ -4,8 +4,8 @@
 #include <string.h>
 
 class DisplayDriver {
-  int _w, _h;
 protected:
+  int _w, _h;
   DisplayDriver(int w, int h) { _w = w; _h = h; }
 #ifdef CYRILLIC_SUPPORT
   uint8_t _font_size = 1;     // current text size; used for baseline offset and word-wrap metrics
@@ -17,6 +17,7 @@ public:
   int width() const { return _w; }
   int height() const { return _h; }
 
+  virtual void setRotation(uint8_t r) {}
   virtual bool isEink() const { return false; }
   virtual bool isColorTFT() const { return false; }
   virtual void setFullRefreshSuppressed(bool s) {}

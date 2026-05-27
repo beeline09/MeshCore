@@ -32,6 +32,18 @@
 
 #include "icons.h"
 
+// nRF52 system-metric helpers — declared at file scope (extern "C" is not allowed
+// inside a member function body in C++).
+#if defined(ARDUINO_ARCH_NRF52) || defined(NRF52)
+extern "C" uint32_t analogReadVDD(void);
+
+// SoftDevice (BLE stack) owns the TEMP peripheral; direct register writes crash.
+// BLE builds define BLE_PIN_CODE; USB builds access TEMP registers directly.
+#if defined(BLE_PIN_CODE)
+extern "C" uint32_t sd_temp_get(int32_t *p_temp);
+#endif
+#endif
+
 class SplashScreen : public UIScreen {
   UITask* _task;
   unsigned long dismiss_after;
@@ -128,25 +140,34 @@ class HomeScreen : public UIScreen {
   int           _pm_clock_mode  = 1;   // 0=all msgs switch screen, 1=PM inline only
 
 #if defined(WITH_COMPANION_CLI) && defined(WITH_WIFI_SWITCHING)
-  static const int SETTINGS_N          = 9;
+  static const int SETTINGS_N          = 12;
   static const int SETTINGS_COMMS_IDX  = 3;
   static const int SETTINGS_PM_IDX     = 4;
   static const int SETTINGS_DIM_IDX    = 5;
   static const int SETTINGS_C2L_CH_IDX = 6;
   static const int SETTINGS_C2L_DM_IDX = 7;
-  static const int SETTINGS_BACK_IDX   = 8;
+  static const int SETTINGS_ROT_IDX    = 8;
+  static const int SETTINGS_UNREAD_IDX = 9;
+  static const int SETTINGS_LOG_IDX    = 10;
+  static const int SETTINGS_BACK_IDX   = 11;
 #elif defined(WITH_COMPANION_CLI)
-  static const int SETTINGS_N          = 8;
+  static const int SETTINGS_N          = 11;
   static const int SETTINGS_PM_IDX     = 3;
   static const int SETTINGS_DIM_IDX    = 4;
   static const int SETTINGS_C2L_CH_IDX = 5;
   static const int SETTINGS_C2L_DM_IDX = 6;
-  static const int SETTINGS_BACK_IDX   = 7;
+  static const int SETTINGS_ROT_IDX    = 7;
+  static const int SETTINGS_UNREAD_IDX = 8;
+  static const int SETTINGS_LOG_IDX    = 9;
+  static const int SETTINGS_BACK_IDX   = 10;
 #else
-  static const int SETTINGS_N          = 3;
+  static const int SETTINGS_N          = 6;
   static const int SETTINGS_PM_IDX     = 0;
   static const int SETTINGS_DIM_IDX    = 1;
-  static const int SETTINGS_BACK_IDX   = 2;
+  static const int SETTINGS_ROT_IDX    = 2;
+  static const int SETTINGS_UNREAD_IDX = 3;
+  static const int SETTINGS_LOG_IDX    = 4;
+  static const int SETTINGS_BACK_IDX   = 5;
 #endif
 
 #ifdef WITH_WIFI_SWITCHING
@@ -207,12 +228,53 @@ class HomeScreen : public UIScreen {
   int sensors_scroll_offset = 0;
   int next_sensors_refresh = 0;
   
+  // Special CayenneLPP channels for synthetic system metrics (rendered with custom labels)
+  static const uint8_t SYS_CH_VDD           = 254;  // VDD voltage (LPP_VOLTAGE)
+  static const uint8_t SYS_CH_CPU_TEMP      = 253;  // CPU temperature (LPP_TEMPERATURE)
+  static const uint8_t SYS_CH_UPTIME_REBOOT = 252;  // uptime since reboot, encoded as hours (LPP_TEMPERATURE)
+  static const uint8_t SYS_CH_UPTIME_CHARGE = 251;  // uptime since charge, encoded as hours (LPP_TEMPERATURE)
+
   void refresh_sensors() {
     if (millis() > next_sensors_refresh) {
       sensors_lpp.reset();
       sensors_nb = 0;
       sensors_lpp.addVoltage(TELEM_CHANNEL_SELF, (float)board.getBattMilliVolts() / 1000.0f);
       sensors.querySensors(0xFF, sensors_lpp);
+
+      // nRF52 system metrics --------------------------------------------------
+#if defined(ARDUINO_ARCH_NRF52) || defined(NRF52)
+      // VDD: internal 3.6V reference, 12-bit, no external divider needed
+      float vdd = analogReadVDD() * 3.6f / 4096.0f;
+      sensors_lpp.addVoltage(SYS_CH_VDD, vdd);
+#ifdef NRF_TEMP
+      // CPU die temperature (0.25°C per unit).
+      // SoftDevice (BLE) owns the TEMP peripheral — use sd_temp_get() SVC.
+      // USB builds without SoftDevice access the register directly.
+      {
+        float cpu_t = 0.0f;
+#if defined(BLE_PIN_CODE)
+        int32_t raw = 0;
+        sd_temp_get(&raw);
+        cpu_t = raw / 4.0f;
+#else
+        NRF_TEMP->TASKS_START = 1;
+        while (!NRF_TEMP->EVENTS_DATARDY) {}
+        NRF_TEMP->EVENTS_DATARDY = 0;
+        cpu_t = NRF_TEMP->TEMP / 4.0f;
+        NRF_TEMP->TASKS_STOP = 1;
+#endif
+        sensors_lpp.addTemperature(SYS_CH_CPU_TEMP, cpu_t);
+      }
+#endif
+#endif
+      // Uptime: encoded as fractional hours (range ±3276.7 h = ~136 days, sufficient)
+      float up_reboot_h = millis() / 3600000.0f;
+      float up_charge_h = up_reboot_h;
+      if (_node_prefs) up_charge_h += _node_prefs->ui_charge_uptime_base / 3600.0f;
+      sensors_lpp.addTemperature(SYS_CH_UPTIME_REBOOT, up_reboot_h);
+      sensors_lpp.addTemperature(SYS_CH_UPTIME_CHARGE, up_charge_h);
+      // -----------------------------------------------------------------------
+
       LPPReader reader (sensors_lpp.getBuffer(), sensors_lpp.getSize());
       uint8_t channel, type;
       while(reader.readHeader(channel, type)) {
@@ -602,14 +664,19 @@ public:
         display.setCursor(0, y);
         float v;
         switch (type) {
-          case LPP_GPS: // GPS
+          case LPP_GPS: { // GPS
             float lat, lon, alt;
             r.readGPS(lat, lon, alt);
             strcpy(name, "gps"); sprintf(buf, "%.4f %.4f", lat, lon);
             break;
+          }
           case LPP_VOLTAGE:
             r.readVoltage(v);
-            strcpy(name, "voltage"); sprintf(buf, "%6.2f", v);
+            if (channel == SYS_CH_VDD) {
+              strcpy(name, "vdd"); sprintf(buf, "%.2fV", v);
+            } else {
+              strcpy(name, "voltage"); sprintf(buf, "%6.2f", v);
+            }
             break;
           case LPP_CURRENT:
             r.readCurrent(v);
@@ -617,7 +684,21 @@ public:
             break;
           case LPP_TEMPERATURE:
             r.readTemperature(v);
-            strcpy(name, "temperature"); sprintf(buf, "%.2f", v);
+            if (channel == SYS_CH_CPU_TEMP) {
+              // CPU die temperature
+              strcpy(name, "cpu"); sprintf(buf, "%.1f C", v);
+            } else if (channel == SYS_CH_UPTIME_REBOOT || channel == SYS_CH_UPTIME_CHARGE) {
+              // Uptime encoded as fractional hours — format as Xh Ym or Ym Zs
+              strcpy(name, channel == SYS_CH_UPTIME_REBOOT ? "up(boot)" : "up(chg)");
+              uint32_t total_min = (uint32_t)(v * 60.0f + 0.5f);
+              if (total_min < 60) {
+                sprintf(buf, "%um%us", total_min, (uint32_t)(v * 3600.0f + 0.5f) % 60);
+              } else {
+                sprintf(buf, "%uh%02um", total_min / 60, total_min % 60);
+              }
+            } else {
+              strcpy(name, "temperature"); sprintf(buf, "%.2f", v);
+            }
             break;
           case LPP_RELATIVE_HUMIDITY:
             r.readRelativeHumidity(v);
@@ -793,6 +874,9 @@ public:
           else if (i == SETTINGS_C2L_CH_IDX) lbl = "Cyr2Lat Chan";
           else if (i == SETTINGS_C2L_DM_IDX) lbl = "Cyr2Lat DM";
 #endif
+          else if (i == SETTINGS_ROT_IDX)    lbl = "Rotation";
+          else if (i == SETTINGS_UNREAD_IDX) lbl = "Max Unread";
+          else if (i == SETTINGS_LOG_IDX)    lbl = "Max Log";
           display.print(lbl);
           // value (not for Back)
           if (i != SETTINGS_BACK_IDX) {
@@ -831,6 +915,15 @@ public:
             } else if (i == SETTINGS_C2L_DM_IDX) {
               snprintf(val, sizeof(val), "%s", the_mesh.isCyr2LatContactsEnabled() ? "On" : "Off");
 #endif
+            } else if (i == SETTINGS_ROT_IDX && _node_prefs) {
+              static const char* rot_vals[4] = { "0", "90", "180", "270" };
+              snprintf(val, sizeof(val), "%s deg", rot_vals[constrain(_node_prefs->ui_display_rotation, 0, 3)]);
+            } else if (i == SETTINGS_UNREAD_IDX && _node_prefs) {
+              static const int unread_vals[3] = { 16, 32, 64 };
+              snprintf(val, sizeof(val), "%d", unread_vals[constrain(_node_prefs->ui_max_unread_idx, 0, 2)]);
+            } else if (i == SETTINGS_LOG_IDX && _node_prefs) {
+              static const int log_vals[3] = { 16, 32, 64 };
+              snprintf(val, sizeof(val), "%d", log_vals[constrain(_node_prefs->ui_max_log_idx, 0, 2)]);
             }
             display.drawTextRightAlign(display.width() - 2, y, val);
           }
@@ -995,6 +1088,28 @@ public:
             WiFi.scanNetworks(true);  // async
           }
 #endif
+        } else if (_settings_sel == SETTINGS_ROT_IDX && _node_prefs) {
+          int r = _node_prefs->ui_display_rotation;
+          r = fwd ? (r + 1) % 4 : (r + 3) % 4;
+          _node_prefs->ui_display_rotation = r;
+          _task->setDisplayRotation(r);
+          the_mesh.savePrefs();
+        } else if (_settings_sel == SETTINGS_UNREAD_IDX && _node_prefs) {
+          int idx = _node_prefs->ui_max_unread_idx;
+          idx = fwd ? (idx + 1) % 3 : (idx + 2) % 3;
+          _node_prefs->ui_max_unread_idx = idx;
+          static const int size_table[3] = { 16, 32, 64 };
+          _task->updateMsgMaxSizes(size_table[_node_prefs->ui_max_unread_idx],
+                                   size_table[_node_prefs->ui_max_log_idx]);
+          the_mesh.savePrefs();
+        } else if (_settings_sel == SETTINGS_LOG_IDX && _node_prefs) {
+          int idx = _node_prefs->ui_max_log_idx;
+          idx = fwd ? (idx + 1) % 3 : (idx + 2) % 3;
+          _node_prefs->ui_max_log_idx = idx;
+          static const int size_table[3] = { 16, 32, 64 };
+          _task->updateMsgMaxSizes(size_table[_node_prefs->ui_max_unread_idx],
+                                   size_table[_node_prefs->ui_max_log_idx]);
+          the_mesh.savePrefs();
         }
         return true;
       }
@@ -1070,7 +1185,7 @@ class MsgPreviewScreen : public UIScreen {
   UITask* _task;
   mesh::RTCClock* _rtc;
 
-  #define MAX_UNREAD_MSGS   32
+  #define MAX_UNREAD_MSGS   64   // compile-time array capacity; runtime cap via _max_unread
   int num_unread;
   int head = MAX_UNREAD_MSGS - 1; // index of latest unread message
 
@@ -1085,9 +1200,17 @@ public:
 
   MsgPreviewScreen(UITask* task, mesh::RTCClock* rtc) : _task(task), _rtc(rtc) { num_unread = 0; }
 
-  #define MAX_LOG_MSGS  16
+  #define MAX_LOG_MSGS  64   // compile-time array capacity; runtime cap via _max_log
   bool _in_history  = false;
   int  _hist_cursor = 0;
+
+  int _max_unread = 32;  // runtime cap, changed via setMaxSizes()
+  int _max_log    = 32;
+
+  void setMaxSizes(int max_unread, int max_log) {
+    _max_unread = constrain(max_unread, 1, MAX_UNREAD_MSGS);
+    _max_log    = constrain(max_log,    1, MAX_LOG_MSGS);
+  }
 
 private:
   MsgEntry unread[MAX_UNREAD_MSGS];
@@ -1101,7 +1224,7 @@ private:
 
   void pushEntry(const MsgEntry& entry) {
     head = (head + 1) % MAX_UNREAD_MSGS;
-    if (num_unread < MAX_UNREAD_MSGS) num_unread++;
+    if (num_unread < _max_unread) num_unread++;
     unread[head] = entry;
   }
 
@@ -1118,7 +1241,7 @@ public:
     pushEntry(entry);
     _log[_log_head] = entry;
     _log_head = (_log_head + 1) % MAX_LOG_MSGS;
-    if (_log_count < MAX_LOG_MSGS) _log_count++;
+    if (_log_count < _max_log) _log_count++;
     _in_history = false;  // new message interrupts history browse
   }
 
@@ -1156,7 +1279,7 @@ public:
     }
     if (target < 0) return false;
 
-    MsgEntry kept[MAX_UNREAD_MSGS];
+    static MsgEntry kept[MAX_UNREAD_MSGS];  // static: avoids 6 KB stack allocation
     int kept_count = 0;
     for (int i = 0; i < num_unread; i++) {
       if (i == target) continue;
@@ -1328,7 +1451,8 @@ public:
 
   bool handleInput(char c) override {
     if (_in_history) {
-      if (c == KEY_NEXT || c == KEY_RIGHT) {
+      // → / ↓ = newer message (or exit at the newest end)
+      if (c == KEY_NEXT || c == KEY_RIGHT || c == KEY_DOWN) {
         _hist_cursor++;
         if (_hist_cursor >= _log_count) {
           _in_history = false;
@@ -1336,10 +1460,12 @@ public:
         }
         return true;
       }
+      // ← / ↑ = previous (older) message
       if (c == KEY_PREV || c == KEY_LEFT || c == KEY_UP) {
         if (_hist_cursor > 0) _hist_cursor--;
         return true;
       }
+      // ● short / ● long = exit history
       if (c == KEY_ENTER || c == KEY_CANCEL) {
         _in_history = false;
         _task->gotoHomeScreen();
@@ -1347,14 +1473,35 @@ public:
       }
       return false;
     }
+    // → = next unread (dismiss current)
     if (c == KEY_NEXT || c == KEY_RIGHT) {
       head = (head + MAX_UNREAD_MSGS - 1) % MAX_UNREAD_MSGS;
       num_unread--;
       if (num_unread == 0) {
-        _task->gotoHomeScreen();
+        // All unread dismissed — slide into history at the newest message
+        // so the user can confirm they've read it and navigate back if needed.
+        if (_log_count > 0) {
+          _in_history    = true;
+          _hist_cursor   = _log_count - 1;  // newest entry
+        } else {
+          _task->gotoHomeScreen();
+        }
       }
       return true;
     }
+    // ← = выход (back to home)
+    if (c == KEY_LEFT) {
+      _task->gotoHomeScreen();
+      return true;
+    }
+    // ↓ = clear all unread messages
+    if (c == KEY_DOWN) {
+      num_unread = 0;
+      head = MAX_UNREAD_MSGS - 1;
+      _task->gotoHomeScreen();
+      return true;
+    }
+    // KEY_UP reserved for quick reply (TODO: implement)
     if (c == KEY_ENTER || c == KEY_CANCEL) {
       _task->gotoHomeScreen();
       return true;
@@ -1380,6 +1527,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   joystick_left.begin();
   joystick_right.begin();
   back_btn.begin();
+  joystick_down.begin();
 #endif
 #if defined(PIN_USER_BTN_ANA)
   analog_btn.begin();
@@ -1391,6 +1539,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   }
 
   if (_display != NULL) {
+    // Pre-set rotation BEFORE turnOn() so GxEPDDisplay::begin() initialises the panel
+    // with the correct scan direction from the very first display() call.
+    if (_node_prefs != NULL) {
+      _display->setRotation(_node_prefs->ui_display_rotation);
+    }
     _display->turnOn();
   }
 
@@ -1409,6 +1562,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   splash = new SplashScreen(this);
   home = new HomeScreen(this, &rtc_clock, sensors, node_prefs);
   msg_preview = new MsgPreviewScreen(this, &rtc_clock);
+  // Apply runtime buffer sizes from prefs
+  if (_node_prefs != NULL) {
+    static const int size_table[3] = { 16, 32, 64 };
+    int mu = size_table[constrain(_node_prefs->ui_max_unread_idx, 0, 2)];
+    int ml = size_table[constrain(_node_prefs->ui_max_log_idx,    0, 2)];
+    ((MsgPreviewScreen*)msg_preview)->setMaxSizes(mu, ml);
+  }
   setCurrScreen(splash);
 }
 
@@ -1573,11 +1733,28 @@ void UITask::shutdown(bool restart){
   #endif // PIN_BUZZER
 
   if (restart) {
+    // Accumulate uptime into the charge-cycle counter before rebooting
+    if (_node_prefs != NULL) {
+      _node_prefs->ui_charge_uptime_base += millis() / 1000;
+      the_mesh.savePrefs();
+    }
     _board->reboot();
   } else {
     _display->turnOff();
     radio_driver.powerOff();
     _board->powerOff();
+  }
+}
+
+void UITask::setDisplayRotation(uint8_t r) {
+  if (_display != NULL) {
+    _display->setRotation(r);
+  }
+}
+
+void UITask::updateMsgMaxSizes(int max_unread, int max_log) {
+  if (msg_preview) {
+    ((MsgPreviewScreen*)msg_preview)->setMaxSizes(max_unread, max_log);
   }
 }
 
@@ -1614,7 +1791,7 @@ void UITask::loop() {
   if (ev == BUTTON_EVENT_CLICK) {
     c = checkDisplayOn(KEY_UP);
   }
-  // DOWN (D17, shared with ADC): navigate down / next item
+  // DOWN (D7 = P0.11): navigate down / next item
   ev = joystick_down.check();
   if (ev == BUTTON_EVENT_CLICK) {
     c = checkDisplayOn(KEY_DOWN);

@@ -94,6 +94,9 @@ public:
   int  getLogCount() const;
   void gotoMsgHistory();
 
+  void setDisplayRotation(uint8_t r);
+  void updateMsgMaxSizes(int max_unread, int max_log);
+
   void setClockDimMode(int m);
   int  getClockDimMode() const { return _clock_dim_mode; }
 

@@ -31,6 +31,19 @@ class GxEPDDisplay : public DisplayDriver {
   const float offset_x = 0;
   const float offset_y = 10;
 #endif
+  // Logical base dimensions: the "long" and "short" side of the panel.
+  // Stored once so setRotation() can derive _w/_h correctly regardless of
+  // how many times the orientation is changed.
+#if defined(EINK_LOGICAL_W) && defined(EINK_LOGICAL_H)
+  int _logical_long_dim  = (EINK_LOGICAL_W >= EINK_LOGICAL_H) ? EINK_LOGICAL_W : EINK_LOGICAL_H;
+  int _logical_short_dim = (EINK_LOGICAL_W >= EINK_LOGICAL_H) ? EINK_LOGICAL_H : EINK_LOGICAL_W;
+#else
+  int _logical_long_dim  = 128;
+  int _logical_short_dim = 128;
+#endif
+
+  uint8_t _rotation = 3;   // current rotation; persists across turnOff/turnOn so boot uses prefs
+
   bool _init = false;
   bool _isOn = false;
   uint16_t _curr_color;
@@ -52,6 +65,7 @@ public:
 
   bool begin();
 
+  void setRotation(uint8_t r) override;
   bool isEink() const override { return true; }
   void setFullRefreshSuppressed(bool s) override { _suppress_full_refresh = s; }
   bool isOn() override {return _isOn;};

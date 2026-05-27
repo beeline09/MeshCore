@@ -6,8 +6,8 @@ void PromicroEinkBoard::begin() {
     NRF52BoardDCDC::begin();
     btn_prev_state = HIGH;
 
-    // D17 shared: ADC for battery; KEY_DOWN is optional, not used as MomentaryButton
-    pinMode(PIN_VBAT_READ, INPUT);
+    // D17 = P0.31: battery ADC only (PIN_VBAT_READ). KEY_DOWN moved to D7.
+    // nRF52 SAADC reads AIN7 directly; no pinMode() needed for ADC-only pins.
 
     #ifdef BUTTON_PIN
       pinMode(BUTTON_PIN, INPUT_PULLUP);

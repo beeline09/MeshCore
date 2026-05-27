@@ -1000,6 +1000,10 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _prefs.ui_pm_clock_mode = 1;  // PM inline on clock page by default
   _prefs.ui_clock_dim_mode = 0; // normal auto-off by default
   _prefs.adc_multiplier = 0.0f; // 0.0f = use board default
+  _prefs.ui_display_rotation = 3;   // default landscape (matches compile-time DISPLAY_ROTATION=3)
+  _prefs.ui_max_unread_idx = 1;     // 32 unread messages
+  _prefs.ui_max_log_idx = 1;        // 32 history messages
+  _prefs.ui_charge_uptime_base = 0;
   //_prefs.rx_delay_base = 10.0f;  enable once new algo fixed
 #if defined(USE_SX1262) || defined(USE_SX1268)
 #ifdef SX126X_RX_BOOSTED_GAIN
@@ -1088,6 +1092,9 @@ void MyMesh::begin(bool has_display) {
   _prefs.ui_clock_dim_mode = constrain(_prefs.ui_clock_dim_mode, 0, 1);
   _prefs.adc_multiplier = constrain(_prefs.adc_multiplier, 0.0f, 10.0f);
   board.setAdcMultiplier(_prefs.adc_multiplier);
+  _prefs.ui_display_rotation = constrain(_prefs.ui_display_rotation, 0, 3);
+  _prefs.ui_max_unread_idx = constrain(_prefs.ui_max_unread_idx, 0, 2);
+  _prefs.ui_max_log_idx = constrain(_prefs.ui_max_log_idx, 0, 2);
   _cyr2lat_channels_enabled = _prefs.cyr2lat_channels != 0;
   _cyr2lat_contacts_enabled = _prefs.cyr2lat_contacts != 0;
 

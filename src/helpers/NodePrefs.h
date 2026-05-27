@@ -73,4 +73,9 @@ struct NodePrefs {
   uint8_t  cyr2lat_contacts;
   uint8_t  ui_pm_clock_mode;
   uint8_t  ui_clock_dim_mode;
+  // UI display & buffer settings (added in field order 145+)
+  uint8_t  ui_display_rotation;    // 0-3 (GxEPD2 rotation, 3=default landscape)
+  uint8_t  ui_max_unread_idx;      // 0=16, 1=32, 2=64 messages in unread buffer
+  uint8_t  ui_max_log_idx;         // 0=16, 1=32, 2=64 messages in history log
+  uint32_t ui_charge_uptime_base;  // accumulated seconds across soft-reboots (charge cycle)
 };
