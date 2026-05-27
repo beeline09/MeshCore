@@ -933,35 +933,36 @@ public:
 #endif
     // Settings edit mode absorbs all navigation before standard page switching
     if (_page == HomePage::SETTINGS && _in_settings) {
-      // CANCEL (long press) or PREV exits settings; LEFT cycles value (not exit)
+      // ● long (KEY_CANCEL) or KEY_PREV = exit settings
       if (c == KEY_CANCEL || c == KEY_PREV) {
         _in_settings = false;
         return true;
       }
-      // UP = previous item (with proper scroll-follow, including wrap-around)
+      // ↑ (KEY_UP) = previous item, with wrap-around scroll
       if (c == KEY_UP) {
         _settings_sel = (_settings_sel + SETTINGS_N - 1) % SETTINGS_N;
         if (_settings_sel == SETTINGS_N - 1) {
-          // wrapped from top to bottom: scroll to show last page
           _settings_scroll = (SETTINGS_N > _settings_visible) ? (SETTINGS_N - _settings_visible) : 0;
         } else if (_settings_sel < _settings_scroll) {
           _settings_scroll = _settings_sel;
         }
         return true;
       }
-      // RIGHT / NEXT / DOWN = next item
-      if (c == KEY_NEXT || c == KEY_RIGHT || c == KEY_DOWN) {
+      // ● short (KEY_ENTER) = next item ↓, with wrap-around scroll
+      if (c == KEY_ENTER || c == KEY_NEXT || c == KEY_DOWN) {
         _settings_sel = (_settings_sel + 1) % SETTINGS_N;
         if (_settings_sel == 0) _settings_scroll = 0;
         else if (_settings_sel >= _settings_scroll + _settings_visible) _settings_scroll = _settings_sel - _settings_visible + 1;
         return true;
       }
-      // ENTER or LEFT = activate / cycle value of current item
-      if (c == KEY_ENTER || c == KEY_LEFT) {
+      // → (KEY_RIGHT) = cycle value forward  |  ← (KEY_LEFT) = cycle value backward
+      // For binary items direction doesn't matter; for multi-value LEFT reverses.
+      if (c == KEY_RIGHT || c == KEY_LEFT) {
+        bool fwd = (c == KEY_RIGHT);
         if (_settings_sel == SETTINGS_BACK_IDX) {
           _in_settings = false;
         } else if (_settings_sel == SETTINGS_PM_IDX) {
-          _pm_clock_mode = (_pm_clock_mode + 1) % 2;
+          _pm_clock_mode = (_pm_clock_mode + 1) % 2;  // binary — same either way
           _node_prefs->ui_pm_clock_mode = _pm_clock_mode;
           the_mesh.savePrefs();
         } else if (_settings_sel == SETTINGS_DIM_IDX) {
@@ -973,15 +974,17 @@ public:
         } else if (_settings_sel == SETTINGS_C2L_DM_IDX) {
           the_mesh.setCyr2LatContactsEnabled(!the_mesh.isCyr2LatContactsEnabled());
         } else if (_settings_sel == 0) {
-          the_mesh.setChatMode((the_mesh.getChatMode() + 1) % 4);
+          int m = the_mesh.getChatMode();
+          the_mesh.setChatMode(fwd ? (m + 1) % 4 : (m + 3) % 4);
         } else if (_settings_sel == 1) {
           _pin_show_until = millis() + 3000;
         } else if (_settings_sel == 2) {
-          the_mesh.setTimesyncMode((the_mesh.getTimesyncMode() + 1) % 3);
+          int m = the_mesh.getTimesyncMode();
+          the_mesh.setTimesyncMode(fwd ? (m + 1) % 3 : (m + 2) % 3);
 #endif
 #ifdef WITH_WIFI_SWITCHING
         } else if (_settings_sel == SETTINGS_COMMS_IDX) {
-          if (!_wifi_wait) {
+          if (!_wifi_wait && fwd) {
             _in_wifi_select   = true;
             _wifi_sel         = 0;
             _wifi_scan_scroll = 0;
