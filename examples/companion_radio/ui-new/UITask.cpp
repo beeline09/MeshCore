@@ -1766,6 +1766,22 @@ bool UITask::isButtonPressed() const {
 #endif
 }
 
+#if UI_HAS_JOYSTICK
+// Remap directional keys to match display rotation.
+// Default rotation=3 (landscape) needs no remap; each 90° step rotates keys oppositely.
+// Formula: key_steps_CW = (7 - rotation) % 4
+static char remapKeyForRotation(char c, uint8_t rotation) {
+  static const char cw[4] = { KEY_UP, KEY_RIGHT, KEY_DOWN, KEY_LEFT };
+  int dir = -1;
+  for (int i = 0; i < 4; i++) {
+    if (c == cw[i]) { dir = i; break; }
+  }
+  if (dir < 0) return c;
+  int steps = (7 - rotation) % 4;
+  return cw[(dir + steps) % 4];
+}
+#endif
+
 void UITask::loop() {
   char c = 0;
 #if UI_HAS_JOYSTICK
@@ -1833,6 +1849,11 @@ void UITask::loop() {
 #endif
     next_backlight_btn_check = millis() + 300;
   }
+#endif
+
+#if UI_HAS_JOYSTICK
+  if (c != 0 && _node_prefs)
+    c = remapKeyForRotation(c, _node_prefs->ui_display_rotation);
 #endif
 
   if (c != 0 && curr) {
