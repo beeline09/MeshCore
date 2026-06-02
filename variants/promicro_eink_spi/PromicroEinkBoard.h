@@ -43,6 +43,7 @@ class PromicroEinkBoard : public NRF52BoardDCDC {
 protected:
   uint8_t btn_prev_state;
   uint16_t battery_prev_state = 0;
+  uint32_t battery_last_read_time = 0;
   float adc_mult = ADC_MULTIPLIER;
 
 public:
@@ -52,6 +53,12 @@ public:
   #define BATTERY_SAMPLES 8
 
   uint16_t getBattMilliVolts() override {
+    // Проверяем, прошло ли 10 минут с последнего чтения (300000 мс = 5 минут)
+    uint32_t current_time = millis();
+    if (current_time - battery_last_read_time < 300000 && battery_last_read_time != 0) {
+      return battery_prev_state;
+    }
+    
     analogReadResolution(12);
     uint32_t raw = 0;
     uint32_t sample = 0;
@@ -63,9 +70,11 @@ public:
     }
 
     raw = raw / BATTERY_SAMPLES;       
-    battery_prev_state = raw;
     
-    return (uint16_t)(adc_mult * raw);
+    battery_last_read_time = current_time;
+    battery_prev_state = (uint16_t)(adc_mult * raw);
+    
+    return battery_prev_state;
   }
 
   bool setAdcMultiplier(float multiplier) override {
