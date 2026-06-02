@@ -30,7 +30,8 @@
 #define KEY_RIGHT   4   // D4  = P0.22
 #define KEY_UP      5   // D5  = P0.24
 #define KEY_SELECT  6   // D6  = P1.00  (also PIN_BUTTON1 in variant.h)
-#define KEY_DOWN    7   // D7  = P0.11  (free GPIO, no conflicts)
+#define KEY_DOWN    17  // D17 = P0.31  (shared with battery ADC — no MomentaryButton)
+//#define KEY_DOWN    7   // D7  = P0.11  (free GPIO, no conflicts)
 
 // Battery ADC on D17 = P0.31 (AIN7).
 // Requires external voltage divider: VBAT → 100kΩ → D17 → 100kΩ → GND.
@@ -41,6 +42,7 @@
 class PromicroEinkBoard : public NRF52BoardDCDC {
 protected:
   uint8_t btn_prev_state;
+  uint16_t battery_prev_state = 0;
   float adc_mult = ADC_MULTIPLIER;
 
 public:
@@ -52,10 +54,17 @@ public:
   uint16_t getBattMilliVolts() override {
     analogReadResolution(12);
     uint32_t raw = 0;
+    uint32_t sample = 0;
+
     for (int i = 0; i < BATTERY_SAMPLES; i++) {
-      raw += analogRead(PIN_VBAT_READ);
+      sample = analogRead(PIN_VBAT_READ);
+      if(sample < 250) return battery_prev_state;
+      raw += sample;
     }
-    raw = raw / BATTERY_SAMPLES;
+
+    raw = raw / BATTERY_SAMPLES;       
+    battery_prev_state = raw;
+    
     return (uint16_t)(adc_mult * raw);
   }
 
