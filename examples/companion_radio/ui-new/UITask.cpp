@@ -270,7 +270,13 @@ class HomeScreen : public UIScreen {
       // Uptime: encoded as fractional hours (range ±3276.7 h = ~136 days, sufficient)
       float up_reboot_h = millis() / 3600000.0f;
       float up_charge_h = up_reboot_h;
-      if (_node_prefs) up_charge_h += _node_prefs->ui_charge_uptime_base / 3600.0f;
+      if (_node_prefs) {
+        // ui_charge_uptime_base stores signed seconds (two's complement) — negative offset
+        // is set at charger disconnect so the counter starts from 0 at that moment.
+        int32_t base_secs = (int32_t)_node_prefs->ui_charge_uptime_base;
+        up_charge_h = (float)base_secs / 3600.0f + millis() / 3600000.0f;
+        if (up_charge_h < 0.0f) up_charge_h = 0.0f;
+      }
       sensors_lpp.addTemperature(SYS_CH_UPTIME_REBOOT, up_reboot_h);
       sensors_lpp.addTemperature(SYS_CH_UPTIME_CHARGE, up_charge_h);
       // -----------------------------------------------------------------------
@@ -689,7 +695,7 @@ public:
               strcpy(name, "cpu"); sprintf(buf, "%.1f C", v);
             } else if (channel == SYS_CH_UPTIME_REBOOT || channel == SYS_CH_UPTIME_CHARGE) {
               // Uptime encoded as fractional hours — format as Xh Ym or Ym Zs
-              strcpy(name, channel == SYS_CH_UPTIME_REBOOT ? "up(boot)" : "up(chg)");
+              strcpy(name, channel == SYS_CH_UPTIME_REBOOT ? "uptime" : "on batt");
               uint32_t total_min = (uint32_t)(v * 60.0f + 0.5f);
               if (total_min < 60) {
                 sprintf(buf, "%um%us", total_min, (uint32_t)(v * 3600.0f + 0.5f) % 60);
@@ -1558,6 +1564,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 
   ui_started_at = millis();
   _alert_expiry = 0;
+  _prev_usb_powered = _board->isExternalPowered();
 
   splash = new SplashScreen(this);
   home = new HomeScreen(this, &rtc_clock, sensors, node_prefs);
@@ -1907,6 +1914,14 @@ void UITask::loop() {
 #ifdef PIN_VIBRATION
   vibration.loop();
 #endif
+
+  // Detect charger disconnect → reset battery uptime counter
+  bool usb_now = _board->isExternalPowered();
+  if (_prev_usb_powered && !usb_now && _node_prefs) {
+    _node_prefs->ui_charge_uptime_base = (uint32_t)(-(int32_t)(millis() / 1000));
+    the_mesh.savePrefs();
+  }
+  _prev_usb_powered = usb_now;
 
 #ifdef AUTO_SHUTDOWN_MILLIVOLTS
   if (millis() > next_batt_chck) {
