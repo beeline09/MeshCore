@@ -14,7 +14,7 @@
 #endif
 
 #ifndef EINK_FULL_REFRESH_INTERVAL
-  #define EINK_FULL_REFRESH_INTERVAL  40
+  #define EINK_FULL_REFRESH_INTERVAL  100
 #endif
 
 #ifdef ESP32
