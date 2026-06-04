@@ -670,6 +670,12 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
   }
 
   uint8_t channel_idx = findChannelIdx(channel);
+#ifdef WITH_COMPANION_CLI
+  {
+    ChannelDetails ch;
+    if (getChannel(channel_idx, ch) && strcmp(ch.name, "TerminalCLI") == 0) return;
+  }
+#endif
   out_frame[i++] = channel_idx;
   uint8_t path_len = out_frame[i++] = pkt->isRouteFlood() ? pkt->getPathHashCount() : 0xFF;
 
@@ -1334,9 +1340,14 @@ void MyMesh::handleCmdFrame(size_t len) {
       ChannelDetails channel;
       bool success = getChannel(channel_idx, channel);
 #ifdef WITH_COMPANION_CLI
-      if (_terminal_cli_enabled && success && strcmp(channel.name, "TerminalCLI") == 0) {
-        const_cast<char*>(text)[len - i] = '\0'; // text is not null-terminated in this frame type
-        handleTerminalCLI(channel_idx, msg_timestamp, text);
+      if (success && strcmp(channel.name, "TerminalCLI") == 0) {
+        if (_terminal_cli_enabled) {
+          const_cast<char*>(text)[len - i] = '\0'; // text is not null-terminated in this frame type
+          handleTerminalCLI(channel_idx, msg_timestamp, text);
+        } else {
+          writeOKFrame();
+          sendCliReplyChannel(channel_idx, "Make me on");
+        }
       } else
 #endif
       if (success) {
