@@ -17,6 +17,7 @@ class E213Display : public DisplayDriver {
   CRC32 display_crc;
   uint32_t last_display_crc_value = 0;
   uint8_t _partial_refresh_count = 0;
+  bool _suppress_full_refresh = false;
 
 public:
   E213Display(RefCountedDigitalPin* periph_power = NULL) : DisplayDriver(250, 122), _periph_power(periph_power) {}
@@ -27,6 +28,7 @@ public:
   }
   bool begin();
   bool isEink() const override { return true; }
+  void setFullRefreshSuppressed(bool s) override { _suppress_full_refresh = s; }
   bool isOn() override { return _isOn; }
   void turnOn() override;
   void turnOff() override;
