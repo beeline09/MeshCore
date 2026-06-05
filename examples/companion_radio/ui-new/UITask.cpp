@@ -140,34 +140,37 @@ class HomeScreen : public UIScreen {
   int           _pm_clock_mode  = 1;   // 0=all msgs switch screen, 1=PM inline only
 
 #if defined(WITH_COMPANION_CLI) && defined(WITH_WIFI_SWITCHING)
-  static const int SETTINGS_N          = 12;
-  static const int SETTINGS_COMMS_IDX  = 3;
-  static const int SETTINGS_PM_IDX     = 4;
-  static const int SETTINGS_DIM_IDX    = 5;
-  static const int SETTINGS_C2L_CH_IDX = 6;
-  static const int SETTINGS_C2L_DM_IDX = 7;
-  static const int SETTINGS_ROT_IDX    = 8;
-  static const int SETTINGS_UNREAD_IDX = 9;
-  static const int SETTINGS_LOG_IDX    = 10;
-  static const int SETTINGS_BACK_IDX   = 11;
+  static const int SETTINGS_N               = 13;
+  static const int SETTINGS_COMMS_IDX       = 3;
+  static const int SETTINGS_PM_IDX          = 4;
+  static const int SETTINGS_DIM_IDX         = 5;
+  static const int SETTINGS_C2L_CH_IDX      = 6;
+  static const int SETTINGS_C2L_DM_IDX      = 7;
+  static const int SETTINGS_ROT_IDX         = 8;
+  static const int SETTINGS_UNREAD_IDX      = 9;
+  static const int SETTINGS_LOG_IDX         = 10;
+  static const int SETTINGS_ANTIGHOST_IDX   = 11;
+  static const int SETTINGS_BACK_IDX        = 12;
 #elif defined(WITH_COMPANION_CLI)
-  static const int SETTINGS_N          = 11;
-  static const int SETTINGS_PM_IDX     = 3;
-  static const int SETTINGS_DIM_IDX    = 4;
-  static const int SETTINGS_C2L_CH_IDX = 5;
-  static const int SETTINGS_C2L_DM_IDX = 6;
-  static const int SETTINGS_ROT_IDX    = 7;
-  static const int SETTINGS_UNREAD_IDX = 8;
-  static const int SETTINGS_LOG_IDX    = 9;
-  static const int SETTINGS_BACK_IDX   = 10;
+  static const int SETTINGS_N               = 12;
+  static const int SETTINGS_PM_IDX          = 3;
+  static const int SETTINGS_DIM_IDX         = 4;
+  static const int SETTINGS_C2L_CH_IDX      = 5;
+  static const int SETTINGS_C2L_DM_IDX      = 6;
+  static const int SETTINGS_ROT_IDX         = 7;
+  static const int SETTINGS_UNREAD_IDX      = 8;
+  static const int SETTINGS_LOG_IDX         = 9;
+  static const int SETTINGS_ANTIGHOST_IDX   = 10;
+  static const int SETTINGS_BACK_IDX        = 11;
 #else
-  static const int SETTINGS_N          = 6;
-  static const int SETTINGS_PM_IDX     = 0;
-  static const int SETTINGS_DIM_IDX    = 1;
-  static const int SETTINGS_ROT_IDX    = 2;
-  static const int SETTINGS_UNREAD_IDX = 3;
-  static const int SETTINGS_LOG_IDX    = 4;
-  static const int SETTINGS_BACK_IDX   = 5;
+  static const int SETTINGS_N               = 7;
+  static const int SETTINGS_PM_IDX          = 0;
+  static const int SETTINGS_DIM_IDX         = 1;
+  static const int SETTINGS_ROT_IDX         = 2;
+  static const int SETTINGS_UNREAD_IDX      = 3;
+  static const int SETTINGS_LOG_IDX         = 4;
+  static const int SETTINGS_ANTIGHOST_IDX   = 5;
+  static const int SETTINGS_BACK_IDX        = 6;
 #endif
 
 #ifdef WITH_WIFI_SWITCHING
@@ -880,9 +883,10 @@ public:
           else if (i == SETTINGS_C2L_CH_IDX) lbl = "Cyr2Lat Chan";
           else if (i == SETTINGS_C2L_DM_IDX) lbl = "Cyr2Lat DM";
 #endif
-          else if (i == SETTINGS_ROT_IDX)    lbl = "Rotation";
-          else if (i == SETTINGS_UNREAD_IDX) lbl = "Max Unread";
-          else if (i == SETTINGS_LOG_IDX)    lbl = "Max Log";
+          else if (i == SETTINGS_ROT_IDX)       lbl = "Rotation";
+          else if (i == SETTINGS_UNREAD_IDX)   lbl = "Max Unread";
+          else if (i == SETTINGS_LOG_IDX)      lbl = "Max Log";
+          else if (i == SETTINGS_ANTIGHOST_IDX) lbl = "Antighost";
           display.print(lbl);
           // value (not for Back)
           if (i != SETTINGS_BACK_IDX) {
@@ -930,6 +934,8 @@ public:
             } else if (i == SETTINGS_LOG_IDX && _node_prefs) {
               static const int log_vals[3] = { 16, 32, 64 };
               snprintf(val, sizeof(val), "%d", log_vals[constrain(_node_prefs->ui_max_log_idx, 0, 2)]);
+            } else if (i == SETTINGS_ANTIGHOST_IDX && _node_prefs) {
+              snprintf(val, sizeof(val), "%s", _node_prefs->ui_eink_antighost ? "On" : "Off");
             }
             display.drawTextRightAlign(display.width() - 2, y, val);
           }
@@ -1115,6 +1121,9 @@ public:
           static const int size_table[3] = { 16, 32, 64 };
           _task->updateMsgMaxSizes(size_table[_node_prefs->ui_max_unread_idx],
                                    size_table[_node_prefs->ui_max_log_idx]);
+          the_mesh.savePrefs();
+        } else if (_settings_sel == SETTINGS_ANTIGHOST_IDX && _node_prefs) {
+          _node_prefs->ui_eink_antighost = _node_prefs->ui_eink_antighost ? 0 : 1;
           the_mesh.savePrefs();
         }
         return true;
@@ -1894,8 +1903,11 @@ void UITask::loop() {
       } else {
         _next_refresh = millis() + delay_millis;
       }
-      if (_display->isEink() && home)
-        _display->setFullRefreshSuppressed(((HomeScreen*)home)->isOnClockPage());
+      if (_display->isEink() && home) {
+        bool suppress = !_node_prefs || !_node_prefs->ui_eink_antighost
+                        || ((HomeScreen*)home)->isOnClockPage();
+        _display->setFullRefreshSuppressed(suppress);
+      }
       _display->endFrame();
     }
 #if AUTO_OFF_MILLIS > 0
