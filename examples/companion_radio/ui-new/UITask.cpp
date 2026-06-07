@@ -227,15 +227,13 @@ class HomeScreen : public UIScreen {
 
   CayenneLPP sensors_lpp;
   int sensors_nb = 0;
-  bool sensors_scroll = false;
   int sensors_scroll_offset = 0;
+  int _sensors_visible_rows = UI_RECENT_LIST_SIZE;  // updated each render()
   int next_sensors_refresh = 0;
-  
+
   // Special CayenneLPP channels for synthetic system metrics (rendered with custom labels)
-  static const uint8_t SYS_CH_VDD           = 254;  // VDD voltage (LPP_VOLTAGE)
-  static const uint8_t SYS_CH_CPU_TEMP      = 253;  // CPU temperature (LPP_TEMPERATURE)
-  static const uint8_t SYS_CH_UPTIME_REBOOT = 252;  // uptime since reboot, encoded as hours (LPP_TEMPERATURE)
-  static const uint8_t SYS_CH_UPTIME_CHARGE = 251;  // uptime since charge, encoded as hours (LPP_TEMPERATURE)
+  static const uint8_t SYS_CH_VDD      = 254;  // VDD voltage (LPP_VOLTAGE)
+  static const uint8_t SYS_CH_CPU_TEMP = 253;  // CPU temperature (LPP_TEMPERATURE)
 
   void refresh_sensors() {
     if (millis() > next_sensors_refresh) {
@@ -270,18 +268,6 @@ class HomeScreen : public UIScreen {
       }
 #endif
 #endif
-      // Uptime: encoded as fractional hours (range ±3276.7 h = ~136 days, sufficient)
-      float up_reboot_h = millis() / 3600000.0f;
-      float up_charge_h = up_reboot_h;
-      if (_node_prefs) {
-        // ui_charge_uptime_base stores signed seconds (two's complement) — negative offset
-        // is set at charger disconnect so the counter starts from 0 at that moment.
-        int32_t base_secs = (int32_t)_node_prefs->ui_charge_uptime_base;
-        up_charge_h = (float)base_secs / 3600.0f + millis() / 3600000.0f;
-        if (up_charge_h < 0.0f) up_charge_h = 0.0f;
-      }
-      sensors_lpp.addTemperature(SYS_CH_UPTIME_REBOOT, up_reboot_h);
-      sensors_lpp.addTemperature(SYS_CH_UPTIME_CHARGE, up_charge_h);
       // -----------------------------------------------------------------------
 
       LPPReader reader (sensors_lpp.getBuffer(), sensors_lpp.getSize());
@@ -290,7 +276,6 @@ class HomeScreen : public UIScreen {
         reader.skipData(type);
         sensors_nb ++;
       }
-      sensors_scroll = sensors_nb > UI_RECENT_LIST_SIZE;
 #if AUTO_OFF_MILLIS > 0
       next_sensors_refresh = millis() + 5000; // refresh sensor values every 5 sec
 #else
@@ -655,90 +640,113 @@ public:
       refresh_sensors();
       char buf[30];
       char name[30];
-      LPPReader r(sensors_lpp.getBuffer(), sensors_lpp.getSize());
 
-      for (int i = 0; i < sensors_scroll_offset; i++) {
+      // How many rows fit on this display; uptime rows always appended after LPP data
+      int sensors_max_rows = (display.height() - content_y) / line_h;
+      if (sensors_max_rows < 1) sensors_max_rows = 1;
+      _sensors_visible_rows = sensors_max_rows;
+      int total_rows = sensors_nb + 2;  // +2: "uptime" and "on batt"
+
+      // Clamp scroll offset to valid range
+      int max_offset = total_rows - sensors_max_rows;
+      if (max_offset < 0) max_offset = 0;
+      if (sensors_scroll_offset > max_offset) sensors_scroll_offset = max_offset;
+
+      // Skip LPP entries above the scroll window
+      LPPReader r(sensors_lpp.getBuffer(), sensors_lpp.getSize());
+      int lpp_skip = sensors_scroll_offset < sensors_nb ? sensors_scroll_offset : sensors_nb;
+      for (int i = 0; i < lpp_skip; i++) {
         uint8_t channel, type;
         r.readHeader(channel, type);
         r.skipData(type);
       }
 
-      for (int i = 0; i < (sensors_scroll?UI_RECENT_LIST_SIZE:sensors_nb); i++) {
-        uint8_t channel, type;
-        if (!r.readHeader(channel, type)) { // reached end, reset
-          r.reset();
+      int rows_to_show = total_rows - sensors_scroll_offset;
+      if (rows_to_show > sensors_max_rows) rows_to_show = sensors_max_rows;
+
+      for (int row = 0; row < rows_to_show; row++) {
+        int abs_row = sensors_scroll_offset + row;
+        display.setCursor(0, y);
+        float v;
+
+        if (abs_row < sensors_nb) {
+          // --- LPP sensor row ---
+          uint8_t channel, type;
           r.readHeader(channel, type);
+          switch (type) {
+            case LPP_GPS: {
+              float lat, lon, alt;
+              r.readGPS(lat, lon, alt);
+              strcpy(name, "gps"); sprintf(buf, "%.4f %.4f", lat, lon);
+              break;
+            }
+            case LPP_VOLTAGE:
+              r.readVoltage(v);
+              if (channel == SYS_CH_VDD) {
+                strcpy(name, "vdd"); sprintf(buf, "%.2fV", v);
+              } else {
+                strcpy(name, "voltage"); sprintf(buf, "%6.2f", v);
+              }
+              break;
+            case LPP_CURRENT:
+              r.readCurrent(v);
+              strcpy(name, "current"); sprintf(buf, "%.3f", v);
+              break;
+            case LPP_TEMPERATURE:
+              r.readTemperature(v);
+              if (channel == SYS_CH_CPU_TEMP) {
+                strcpy(name, "cpu"); sprintf(buf, "%.1f C", v);
+              } else {
+                strcpy(name, "temperature"); sprintf(buf, "%.2f", v);
+              }
+              break;
+            case LPP_RELATIVE_HUMIDITY:
+              r.readRelativeHumidity(v);
+              strcpy(name, "humidity"); sprintf(buf, "%.2f", v);
+              break;
+            case LPP_BAROMETRIC_PRESSURE:
+              r.readPressure(v);
+              strcpy(name, "pressure"); sprintf(buf, "%.2f", v);
+              break;
+            case LPP_ALTITUDE:
+              r.readAltitude(v);
+              strcpy(name, "altitude"); sprintf(buf, "%.0f", v);
+              break;
+            case LPP_POWER:
+              r.readPower(v);
+              strcpy(name, "power"); sprintf(buf, "%6.2f", v);
+              break;
+            default:
+              r.skipData(type);
+              strcpy(name, "unk"); sprintf(buf, "");
+          }
+        } else {
+          // --- Uptime rows: computed fresh each render, never cached ---
+          uint32_t now_s = millis() / 1000;
+          uint32_t secs;
+          if (abs_row == sensors_nb) {
+            strcpy(name, "uptime");
+            secs = now_s;
+          } else {
+            bool usb = _task->isUsbConnected();
+            strcpy(name, usb ? "on charge" : "on batt");
+            uint32_t event_ms = _task->usbEventMs();
+            secs = (millis() - event_ms) / 1000;
+          }
+          uint32_t m = secs / 60;
+          if (m < 60)
+            sprintf(buf, "%um%02us", m, secs % 60);
+          else
+            sprintf(buf, "%uh%02um", m / 60, m % 60);
         }
 
         display.setCursor(0, y);
-        float v;
-        switch (type) {
-          case LPP_GPS: { // GPS
-            float lat, lon, alt;
-            r.readGPS(lat, lon, alt);
-            strcpy(name, "gps"); sprintf(buf, "%.4f %.4f", lat, lon);
-            break;
-          }
-          case LPP_VOLTAGE:
-            r.readVoltage(v);
-            if (channel == SYS_CH_VDD) {
-              strcpy(name, "vdd"); sprintf(buf, "%.2fV", v);
-            } else {
-              strcpy(name, "voltage"); sprintf(buf, "%6.2f", v);
-            }
-            break;
-          case LPP_CURRENT:
-            r.readCurrent(v);
-            strcpy(name, "current"); sprintf(buf, "%.3f", v);
-            break;
-          case LPP_TEMPERATURE:
-            r.readTemperature(v);
-            if (channel == SYS_CH_CPU_TEMP) {
-              // CPU die temperature
-              strcpy(name, "cpu"); sprintf(buf, "%.1f C", v);
-            } else if (channel == SYS_CH_UPTIME_REBOOT || channel == SYS_CH_UPTIME_CHARGE) {
-              // Uptime encoded as fractional hours — format as Xh Ym or Ym Zs
-              strcpy(name, channel == SYS_CH_UPTIME_REBOOT ? "uptime" : "on batt");
-              uint32_t total_min = (uint32_t)(v * 60.0f + 0.5f);
-              if (total_min < 60) {
-                sprintf(buf, "%um%us", total_min, (uint32_t)(v * 3600.0f + 0.5f) % 60);
-              } else {
-                sprintf(buf, "%uh%02um", total_min / 60, total_min % 60);
-              }
-            } else {
-              strcpy(name, "temperature"); sprintf(buf, "%.2f", v);
-            }
-            break;
-          case LPP_RELATIVE_HUMIDITY:
-            r.readRelativeHumidity(v);
-            strcpy(name, "humidity"); sprintf(buf, "%.2f", v);
-            break;
-          case LPP_BAROMETRIC_PRESSURE:
-            r.readPressure(v);
-            strcpy(name, "pressure"); sprintf(buf, "%.2f", v);
-            break;
-          case LPP_ALTITUDE:
-            r.readAltitude(v);
-            strcpy(name, "altitude"); sprintf(buf, "%.0f", v);
-            break;
-          case LPP_POWER:
-            r.readPower(v);
-            strcpy(name, "power"); sprintf(buf, "%6.2f", v);
-            break;
-          default:
-            r.skipData(type);
-            strcpy(name, "unk"); sprintf(buf, "");
-        }
-        display.setCursor(0, y);
         display.print(name);
-        display.setCursor(
-          display.width()-display.getTextWidth(buf)-1, y
-        );
+        display.setCursor(display.width() - display.getTextWidth(buf) - 1, y);
         display.print(buf);
         y += line_h;
       }
-      if (sensors_scroll) sensors_scroll_offset = (sensors_scroll_offset+1)%sensors_nb;
-      else sensors_scroll_offset = 0;
+      // No auto-scroll: offset is controlled manually via KEY_UP / KEY_DOWN
 #endif
     } else if (_page == HomePage::SETTINGS) {
       display.setTextSize(hdr_size);
@@ -1131,12 +1139,28 @@ public:
       return true;  // absorb all other keys in edit mode
     }
 
+#if UI_SENSORS_PAGE == 1
+    // On SENSORS page: UP/DOWN scroll the list; LEFT/RIGHT still navigate pages
+    if (_page == HomePage::SENSORS && (sensors_nb + 2) > _sensors_visible_rows) {
+      if (c == KEY_UP) {
+        if (sensors_scroll_offset > 0) sensors_scroll_offset--;
+        return true;
+      }
+      if (c == KEY_DOWN) {
+        if (sensors_scroll_offset < sensors_nb + 2 - _sensors_visible_rows)
+          sensors_scroll_offset++;
+        return true;
+      }
+    }
+#endif
     if (c == KEY_LEFT || c == KEY_PREV || c == KEY_UP) {
       _page = (_page + HomePage::Count - 1) % HomePage::Count;
+      if (_page == HomePage::SENSORS) sensors_scroll_offset = 0;
       return true;
     }
     if (c == KEY_NEXT || c == KEY_RIGHT || c == KEY_DOWN) {
       _page = (_page + 1) % HomePage::Count;
+      if (_page == HomePage::SENSORS) sensors_scroll_offset = 0;
       return true;
     }
 #ifndef WITH_WIFI_SWITCHING
@@ -1574,6 +1598,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   ui_started_at = millis();
   _alert_expiry = 0;
   _prev_usb_powered = _board->isExternalPowered();
+  _usb_connected = _prev_usb_powered;
+  _usb_event_ms = 0;
 
   splash = new SplashScreen(this);
   home = new HomeScreen(this, &rtc_clock, sensors, node_prefs);
@@ -1598,6 +1624,18 @@ void UITask::setClockDimMode(int m) {
 void UITask::showAlert(const char* text, int duration_millis) {
   strcpy(_alert, text);
   _alert_expiry = millis() + duration_millis;
+}
+
+void UITask::updateUsbState(bool force_refresh) {
+  bool usb_now = _board->isExternalPowered();
+  if (usb_now != _prev_usb_powered) {
+    _usb_connected = usb_now;
+    _usb_event_ms = millis();
+    if (force_refresh) {
+      _next_refresh = 0;
+    }
+  }
+  _prev_usb_powered = usb_now;
 }
 
 void UITask::notify(UIEventType t) {
@@ -1823,7 +1861,7 @@ void UITask::loop() {
   if (ev == BUTTON_EVENT_CLICK) {
     c = checkDisplayOn(KEY_UP);
   }
-  // DOWN (D7 = P0.11): navigate down / next item
+  // DOWN (D17 = P0.31): navigate down / next item
   ev = joystick_down.check();
   if (ev == BUTTON_EVENT_CLICK) {
     c = checkDisplayOn(KEY_DOWN);
@@ -1884,6 +1922,9 @@ void UITask::loop() {
   if (buzzer.isPlaying())  buzzer.loop();
 #endif
 
+  // Timers on the sensors page use this state, so update it before rendering.
+  updateUsbState(true);
+
   if (curr) curr->poll();
 
   if (_display != NULL && _display->isOn()) {
@@ -1926,14 +1967,6 @@ void UITask::loop() {
 #ifdef PIN_VIBRATION
   vibration.loop();
 #endif
-
-  // Detect charger disconnect → reset battery uptime counter
-  bool usb_now = _board->isExternalPowered();
-  if (_prev_usb_powered && !usb_now && _node_prefs) {
-    _node_prefs->ui_charge_uptime_base = (uint32_t)(-(int32_t)(millis() / 1000));
-    the_mesh.savePrefs();
-  }
-  _prev_usb_powered = usb_now;
 
 #ifdef AUTO_SHUTDOWN_MILLIVOLTS
   if (millis() > next_batt_chck) {
