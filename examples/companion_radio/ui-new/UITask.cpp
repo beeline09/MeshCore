@@ -32,6 +32,23 @@
 
 #include "icons.h"
 
+static void formatDuration(char* buf, size_t len, uint32_t secs) {
+  uint32_t m = secs / 60;
+  uint32_t h = m / 60;
+  uint32_t d = h / 24;
+  uint32_t y = d / 365;
+  if (secs < 60)
+    snprintf(buf, len, "%us", secs);
+  else if (h == 0)
+    snprintf(buf, len, "%um", m);
+  else if (d == 0)
+    snprintf(buf, len, "%uh %um", h, m % 60);
+  else if (y == 0)
+    snprintf(buf, len, "%ud %uh %um", d, h % 24, m % 60);
+  else
+    snprintf(buf, len, "%uy %ud %uh %um", y, d - y * 365, h % 24, m % 60);
+}
+
 // nRF52 system-metric helpers — declared at file scope (extern "C" is not allowed
 // inside a member function body in C++).
 #if defined(ARDUINO_ARCH_NRF52) || defined(NRF52)
@@ -683,38 +700,38 @@ public:
             case LPP_VOLTAGE:
               r.readVoltage(v);
               if (channel == SYS_CH_VDD) {
-                strcpy(name, "vdd"); sprintf(buf, "%.2fV", v);
+                strcpy(name, "Vdd(3.3)"); sprintf(buf, "%.2f V", v);
               } else {
-                strcpy(name, "voltage"); sprintf(buf, "%6.2f", v);
+                strcpy(name, "Voltage"); sprintf(buf, "%.2f V", v);
               }
               break;
             case LPP_CURRENT:
               r.readCurrent(v);
-              strcpy(name, "current"); sprintf(buf, "%.3f", v);
+              strcpy(name, "Current"); sprintf(buf, "%.3f A", v);
               break;
             case LPP_TEMPERATURE:
               r.readTemperature(v);
               if (channel == SYS_CH_CPU_TEMP) {
-                strcpy(name, "cpu"); sprintf(buf, "%.1f C", v);
+                strcpy(name, "CPU temp"); sprintf(buf, "%.1f\xb0" "C", v);
               } else {
-                strcpy(name, "temperature"); sprintf(buf, "%.2f", v);
+                strcpy(name, "Temp"); sprintf(buf, "%.1f\xb0" "C", v);
               }
               break;
             case LPP_RELATIVE_HUMIDITY:
               r.readRelativeHumidity(v);
-              strcpy(name, "humidity"); sprintf(buf, "%.2f", v);
+              strcpy(name, "Humidity"); sprintf(buf, "%.1f%%", v);
               break;
             case LPP_BAROMETRIC_PRESSURE:
               r.readPressure(v);
-              strcpy(name, "pressure"); sprintf(buf, "%.2f", v);
+              strcpy(name, "Pressure"); sprintf(buf, "%.1f hPa", v);
               break;
             case LPP_ALTITUDE:
               r.readAltitude(v);
-              strcpy(name, "altitude"); sprintf(buf, "%.0f", v);
+              strcpy(name, "Altitude"); sprintf(buf, "%.0f m", v);
               break;
             case LPP_POWER:
               r.readPower(v);
-              strcpy(name, "power"); sprintf(buf, "%6.2f", v);
+              strcpy(name, "Power"); sprintf(buf, "%.2f W", v);
               break;
             default:
               r.skipData(type);
@@ -722,22 +739,16 @@ public:
           }
         } else {
           // --- Uptime rows: computed fresh each render, never cached ---
-          uint32_t now_s = millis() / 1000;
           uint32_t secs;
           if (abs_row == sensors_nb) {
-            strcpy(name, "uptime");
-            secs = now_s;
+            strcpy(name, "Uptime(boot)");
+            secs = millis() / 1000;
           } else {
             bool usb = _task->isUsbConnected();
-            strcpy(name, usb ? "on charge" : "on batt");
-            uint32_t event_ms = _task->usbEventMs();
-            secs = (millis() - event_ms) / 1000;
+            strcpy(name, usb ? "On charge" : "On batt");
+            secs = _task->usbElapsedSecs();
           }
-          uint32_t m = secs / 60;
-          if (m < 60)
-            sprintf(buf, "%um%02us", m, secs % 60);
-          else
-            sprintf(buf, "%uh%02um", m / 60, m % 60);
+          formatDuration(buf, sizeof(buf), secs);
         }
 
         display.setCursor(0, y);
@@ -1600,6 +1611,15 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _prev_usb_powered = _board->isExternalPowered();
   _usb_connected = _prev_usb_powered;
   _usb_event_ms = 0;
+  // Restore on-batt/on-charge elapsed from prefs (bit 31 = USB state, bits 30-0 = seconds)
+  _usb_elapsed_base = 0;
+  if (_node_prefs) {
+    bool stored_usb = (_node_prefs->ui_charge_uptime_base >> 31) & 1;
+    uint32_t stored_secs = _node_prefs->ui_charge_uptime_base & 0x7FFFFFFF;
+    if (_usb_connected == stored_usb)
+      _usb_elapsed_base = stored_secs;
+  }
+  _next_prefs_save = millis() + 300000;
 
   splash = new SplashScreen(this);
   home = new HomeScreen(this, &rtc_clock, sensors, node_prefs);
@@ -1626,11 +1646,22 @@ void UITask::showAlert(const char* text, int duration_millis) {
   _alert_expiry = millis() + duration_millis;
 }
 
+void UITask::_saveElapsedToPrefs(bool force) {
+  if (!_node_prefs) return;
+  if (!force && millis() < _next_prefs_save) return;
+  uint32_t cur_secs = _usb_elapsed_base + (millis() - _usb_event_ms) / 1000;
+  _node_prefs->ui_charge_uptime_base = (_usb_connected ? (1u << 31) : 0u) | (cur_secs & 0x7FFFFFFF);
+  the_mesh.savePrefs();
+  _next_prefs_save = millis() + 60000;  // min 60s between saves
+}
+
 void UITask::updateUsbState(bool force_refresh) {
   bool usb_now = _board->isExternalPowered();
   if (usb_now != _prev_usb_powered) {
     _usb_connected = usb_now;
     _usb_event_ms = millis();
+    _usb_elapsed_base = 0;
+    _saveElapsedToPrefs(true);  // force-save immediately on USB state change
     if (force_refresh) {
       _next_refresh = 0;
     }
@@ -1787,11 +1818,7 @@ void UITask::shutdown(bool restart){
   #endif // PIN_BUZZER
 
   if (restart) {
-    // Accumulate uptime into the charge-cycle counter before rebooting
-    if (_node_prefs != NULL) {
-      _node_prefs->ui_charge_uptime_base += millis() / 1000;
-      the_mesh.savePrefs();
-    }
+    _saveElapsedToPrefs(true);  // force-save regardless of timer
     _board->reboot();
   } else {
     _display->turnOff();
@@ -1925,6 +1952,8 @@ void UITask::loop() {
   // Timers on the sensors page use this state, so update it before rendering.
   updateUsbState(true);
 
+  _saveElapsedToPrefs();  // saves at most once per 60s; turnOff() also triggers this
+
   if (curr) curr->poll();
 
   if (_display != NULL && _display->isOn()) {
@@ -1956,10 +1985,10 @@ void UITask::loop() {
       // OFF: no dim while on CLOCK page
       if (home && ((HomeScreen*)home)->isOnClockPage())
         _auto_off = millis() + AUTO_OFF_MILLIS;
-      if (millis() > _auto_off) _display->turnOff();
+      if (millis() > _auto_off) { _saveElapsedToPrefs(); _display->turnOff(); }
     } else {
       // ON: normal auto-off
-      if (millis() > _auto_off) _display->turnOff();
+      if (millis() > _auto_off) { _saveElapsedToPrefs(); _display->turnOff(); }
     }
 #endif
   }
