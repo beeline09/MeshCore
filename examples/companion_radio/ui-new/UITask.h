@@ -40,6 +40,10 @@ class UITask : public AbstractUITask {
   unsigned long ui_started_at, next_batt_chck;
   int next_backlight_btn_check = 0;
   bool _prev_usb_powered = false;
+  bool _usb_connected = false;
+  uint32_t _usb_event_ms = 0;      // millis() when USB state last changed (current session)
+  uint32_t _usb_elapsed_base = 0;  // seconds accumulated before current session
+  uint32_t _next_prefs_save = 0;   // millis() for next periodic prefs flush
 #ifdef PIN_STATUS_LED
   int led_state = 0;
   int next_led_change = 0;
@@ -56,6 +60,8 @@ class UITask : public AbstractUITask {
   UIScreen* curr;
 
   void userLedHandler();
+  void updateUsbState(bool force_refresh);
+  void _saveElapsedToPrefs(bool force = false);
 
   // Button action handlers
   char checkDisplayOn(char c);
@@ -80,6 +86,9 @@ public:
   int  getMsgCount() const { return _msgcount; }
   bool hasDisplay() const { return _display != NULL; }
   bool isEinkDisplay() const { return _display != nullptr && _display->isEink(); }
+  bool isUsbConnected() const { return _usb_connected; }
+  uint32_t usbEventMs() const { return _usb_event_ms; }
+  uint32_t usbElapsedSecs() const { return _usb_elapsed_base + (millis() - _usb_event_ms) / 1000; }
   bool isColorTFTDisplay() const { return _display != nullptr && _display->isColorTFT(); }
   bool isButtonPressed() const;
 

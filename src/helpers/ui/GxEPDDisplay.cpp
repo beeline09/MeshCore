@@ -33,7 +33,7 @@ bool GxEPDDisplay::begin() {
     SPI1.begin();
   #endif
 #endif
-  display.init(115200, true, 2, false);
+  display.init(115200, true, 10, false);
   // Use stored _rotation (set via setRotation() before first turnOn()) or compile-time default.
   display.setRotation(_rotation);
   // Update logical dimensions to match the rotation now in effect.
@@ -46,7 +46,7 @@ bool GxEPDDisplay::begin() {
   display.setPartialWindow(0, 0, display.width(), display.height());
 
   display.fillScreen(GxEPD_WHITE);
-  display.display(true);
+  display.display(false);  // full refresh: writes both 0x24 and 0x26 to white, prevents ghost from previous session
   #if DISP_BACKLIGHT
   digitalWrite(DISP_BACKLIGHT, LOW);
   pinMode(DISP_BACKLIGHT, OUTPUT);

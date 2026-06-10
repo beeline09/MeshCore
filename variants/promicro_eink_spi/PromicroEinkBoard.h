@@ -3,6 +3,8 @@
 #include <MeshCore.h>
 #include <Arduino.h>
 #include <helpers/NRF52Board.h>
+#include <nrf_sdm.h>
+#include <nrf_soc.h>
 
 // LoRa SX1262 / LLCC68 — shared SPI bus (D12/D14/D15)
 #define P_LORA_NSS    13  // D13 = P1.13
@@ -34,10 +36,11 @@
 //#define KEY_DOWN    7   // D7  = P0.11  (free GPIO, no conflicts)
 
 // Battery ADC on D17 = P0.31 (AIN7).
-// Requires external voltage divider: VBAT → 100kΩ → D17 → 100kΩ → GND.
-// KEY_DOWN shares this pin; if divider is connected, ADC reads VBAT/2.
+// Voltage divider: VBAT → 100kΩ → D17 → 150kΩ → GND  (ratio = 150/250 = 0.60)
+// ADC_MULTIPLIER = Vref / (2^12 * ratio) * 1000 = 3600 / (4095 * 0.6) = 1.465
+// KEY_DOWN shares this pin; button shorts D17 to GND when pressed.
 #define PIN_VBAT_READ   17   // D17 = P0.31 = AIN7
-#define ADC_MULTIPLIER  (1.73f)
+#define ADC_MULTIPLIER  (1.47f)
 
 class PromicroEinkBoard : public NRF52BoardDCDC {
 protected:
@@ -88,6 +91,19 @@ public:
 
   const char* getManufacturerName() const override {
     return "ProMicro WeAct Eink DIY";
+  }
+
+  bool isExternalPowered() override {
+    uint8_t sd_enabled = 0;
+    sd_softdevice_is_enabled(&sd_enabled);
+
+    uint32_t usb_status = 0;
+    if (sd_enabled) {
+      sd_power_usbregstatus_get(&usb_status);
+    } else {
+      usb_status = NRF_POWER->USBREGSTATUS;
+    }
+    return (usb_status & POWER_USBREGSTATUS_VBUSDETECT_Msk) != 0;
   }
 
   int buttonStateChanged() {
