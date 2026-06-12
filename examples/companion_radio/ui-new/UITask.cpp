@@ -1595,6 +1595,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       _display->setRotation(_node_prefs->ui_display_rotation);
     }
     _display->turnOn();
+
+    _display->startFrame();
+    _display->clear();
+    _display->endFrame();
   }
 
 #ifdef PIN_BUZZER
