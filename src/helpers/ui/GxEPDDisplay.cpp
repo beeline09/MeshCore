@@ -47,6 +47,7 @@ bool GxEPDDisplay::begin() {
 
   display.fillScreen(GxEPD_WHITE);
   display.display(false);  // full refresh: writes both 0x24 and 0x26 to white, prevents ghost from previous session
+  display.hibernate();     // SSD1680 requires HW RST + reinit before partial refresh after full refresh
   #if DISP_BACKLIGHT
   digitalWrite(DISP_BACKLIGHT, LOW);
   pinMode(DISP_BACKLIGHT, OUTPUT);
