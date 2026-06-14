@@ -39,12 +39,17 @@
 #define PIN_SERIAL1_RX       (0)   // D0 = P0.08 (free)
 
 ////////////////////////////////////////////////////////////////////////////////
-// I2C pin definition (defined for compatibility but Wire not used in this variant)
+// I2C pin definition
+// Wire  (TWIM0): D6/D7 — kept for compatibility (D6 doubles as SELECT button)
+// Wire1 (TWIM1): D8/D7 — used for I2C sensors (SDA=P1.04, SCL=P0.11)
 
-#define WIRE_INTERFACES_COUNT 1
+#define WIRE_INTERFACES_COUNT 2
 
-#define PIN_WIRE_SDA         (6)
-#define PIN_WIRE_SCL         (7)
+#define PIN_WIRE_SDA         (6)   // D6 = P1.00
+#define PIN_WIRE_SCL         (7)   // D7 = P0.11
+
+#define PIN_WIRE1_SDA        (8)   // D8 = P1.04
+#define PIN_WIRE1_SCL        (7)   // D7 = P0.11 (shared SCL)
 
 ////////////////////////////////////////////////////////////////////////////////
 // SPI pin definition
