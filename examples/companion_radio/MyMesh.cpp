@@ -350,14 +350,12 @@ uint8_t MyMesh::getExtraAckTransmitCount() const {
 void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   const uint8_t* log_raw = raw;
   int log_len = len;
-#ifdef WITH_COMPANION_CLI
   uint8_t mapped[MAX_TRANS_UNIT];
   int mapped_len = mapCyr2LatChannelRawLog(raw, len, mapped, sizeof(mapped));
   if (mapped_len > 0) {
     log_raw = mapped;
     log_len = mapped_len;
   }
-#endif
   if (_serial->isConnected() && log_len + 3 <= MAX_FRAME_SIZE) {
     int i = 0;
     out_frame[i++] = PUSH_CODE_LOG_RX_DATA;
@@ -670,12 +668,10 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
   }
 
   uint8_t channel_idx = findChannelIdx(channel);
-#ifdef WITH_COMPANION_CLI
   {
     ChannelDetails ch;
     if (getChannel(channel_idx, ch) && strcmp(ch.name, "TerminalCLI") == 0) return;
   }
-#endif
   out_frame[i++] = channel_idx;
   uint8_t path_len = out_frame[i++] = pkt->isRouteFlood() ? pkt->getPathHashCount() : 0xFF;
 
@@ -1103,7 +1099,6 @@ void MyMesh::begin(bool has_display) {
   _prefs.ui_max_log_idx = constrain(_prefs.ui_max_log_idx, 0, 2);
   _cyr2lat_channels_enabled = _prefs.cyr2lat_channels != 0;
   _cyr2lat_contacts_enabled = _prefs.cyr2lat_contacts != 0;
-
 #ifdef BLE_PIN_CODE // 123456 by default
   if (_prefs.ble_pin == 0) {
 #ifdef DISPLAY_CLASS
@@ -1170,6 +1165,92 @@ void MyMesh::begin(bool has_display) {
   }
 #endif
 }
+
+// --------------- UIMessageSender implementation ---------------
+
+int MyMesh::sendContactMsg(const char* name, const char* text, int len) {
+  ContactInfo* c = searchContactsByPrefix(name);
+  if (!c) return 0;
+  const char* send_text = text;
+  char text_buf[MAX_FRAME_SIZE + 1];
+  int send_len = len;
+  if (_cyr2lat_contacts_enabled) {
+    send_len = transliterateChannelText(text, len, text_buf, sizeof(text_buf));
+    send_text = text_buf;
+  }
+  uint32_t msg_ts = getRTCClock()->getCurrentTimeUnique();
+  uint8_t attempt = 0;
+  uint32_t expected_ack, est_timeout;
+  text_buf[send_len < (int)sizeof(text_buf) - 1 ? send_len : (int)sizeof(text_buf) - 1] = '\0';
+  int result = sendMessage(*c, msg_ts, attempt, send_text, expected_ack, est_timeout);
+  if (result != MSG_SEND_FAILED && _ui)
+    _ui->newOutgoingMsg(c->name, text, true, c->type == ADV_TYPE_ROOM);
+  return result;
+}
+
+int MyMesh::sendChannelMsg(const char* name, const char* text, int len) {
+  if (strcmp(name, "TerminalCLI") == 0) {
+#ifdef WITH_COMPANION_CLI
+    int ch_idx = findTerminalCLIChannelIdx();
+    if (ch_idx < 0) return 0;
+
+    char cmd[MAX_TEXT_LEN + 1];
+    int cmd_len = len;
+    if (cmd_len < 0) cmd_len = 0;
+    if (cmd_len > MAX_TEXT_LEN) cmd_len = MAX_TEXT_LEN;
+    memcpy(cmd, text, cmd_len);
+    cmd[cmd_len] = '\0';
+
+    if (_ui) _ui->newOutgoingMsg("TerminalCLI", cmd, false);
+    handleTerminalCLI((uint8_t)ch_idx, getRTCClock()->getCurrentTimeUnique(),
+                      cmd, false, true);
+    return 1;  // local-only channel, never over LoRa
+#else
+    return 0;  // local-only channel, never over LoRa
+#endif
+  }
+  for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
+    ChannelDetails ch;
+    if (!getChannel(i, ch) || !ch.name[0]) continue;
+    if (strcmp(ch.name, name) != 0) continue;
+
+    const char* send_text = text;
+    char text_buf[MAX_FRAME_SIZE + 1];
+    int send_len = len;
+    bool transformed = false;
+    if (_cyr2lat_channels_enabled) {
+      int new_len = transliterateChannelText(text, len, text_buf, sizeof(text_buf));
+      transformed = textDiffers(text, len, text_buf, new_len);
+      send_len = new_len;
+      send_text = text_buf;
+    }
+    int prefix_len = (int)strlen(_prefs.node_name) + 2;
+    if (send_len + prefix_len > MAX_TEXT_LEN) send_len = MAX_TEXT_LEN - prefix_len;
+    if (send_len < 0) send_len = 0;
+    if (send_text != text_buf) {
+      int n = send_len < (int)sizeof(text_buf) - 1 ? send_len : (int)sizeof(text_buf) - 1;
+      memcpy(text_buf, send_text, n);
+      send_text = text_buf;
+      send_len  = n;
+    }
+    text_buf[send_len] = '\0';
+
+    uint32_t msg_ts = getRTCClock()->getCurrentTimeUnique();
+    bool ok;
+    ok = sendGroupMessageWithCyr2LatMap(msg_ts, ch.channel, _prefs.node_name,
+                                        send_text, send_len, text, len, transformed);
+    if (ok && _ui) _ui->newOutgoingMsg(ch.name, text, false);
+    return ok ? 1 : 0;
+  }
+  return 0;
+}
+
+int MyMesh::calcSentBytes(const char* text, int len, bool /*is_channel*/) const {
+  char tmp[MAX_TEXT_LEN + 4];
+  return transliterateChannelText(text, len, tmp, sizeof(tmp));
+}
+
+// --------------------------------------------------------------
 
 const char *MyMesh::getNodeName() {
   return _prefs.node_name;
@@ -1298,13 +1379,11 @@ void MyMesh::handleCmdFrame(size_t len) {
         expected_ack = 0; // no Ack expected
       } else {
         const char* send_text = text;
-#ifdef WITH_COMPANION_CLI
         char text_buf[MAX_FRAME_SIZE + 1];
         if (_cyr2lat_contacts_enabled) {
           transliterateChannelText(text, tlen, text_buf, sizeof(text_buf));
           send_text = text_buf;
         }
-#endif
         result = sendMessage(*recipient, msg_timestamp, attempt, send_text, expected_ack, est_timeout);
       }
       // TODO: add expected ACK to table
@@ -1343,42 +1422,41 @@ void MyMesh::handleCmdFrame(size_t len) {
     } else {
       ChannelDetails channel;
       bool success = getChannel(channel_idx, channel);
-#ifdef WITH_COMPANION_CLI
       if (success && strcmp(channel.name, "TerminalCLI") == 0) {
-        if (_terminal_cli_enabled) {
-          const_cast<char*>(text)[len - i] = '\0'; // text is not null-terminated in this frame type
-          handleTerminalCLI(channel_idx, msg_timestamp, text);
-        } else {
-          writeOKFrame();
-          sendCliReplyChannel(channel_idx, "Make me on");
-        }
-      } else
+#ifdef WITH_COMPANION_CLI
+        const_cast<char*>(text)[len - i] = '\0'; // text is not null-terminated in this frame type
+        if (_ui) _ui->newOutgoingMsg(channel.name, text, false);
+        handleTerminalCLI(channel_idx, msg_timestamp, text, true, true);
+#else
+        writeErrFrame(ERR_CODE_UNSUPPORTED_CMD);
 #endif
-      if (success) {
+      } else if (success) {
         const char* send_text = text;
         int send_len = len - i;
         int orig_len = send_len;
         char text_buf[MAX_FRAME_SIZE + 1];
         bool transformed = false;
 
-#ifdef WITH_COMPANION_CLI
         if (_cyr2lat_channels_enabled) {
           send_len = transliterateChannelText(text, send_len, text_buf, sizeof(text_buf));
           send_text = text_buf;
           transformed = textDiffers(text, orig_len, send_text, send_len);
         }
-#endif
         int prefix_len = strlen(_prefs.node_name) + 2; // "<sender>: "
         if (send_len + prefix_len > MAX_TEXT_LEN) {
           send_len = MAX_TEXT_LEN - prefix_len;
           if (send_len < 0) send_len = 0;
         }
-#ifdef WITH_COMPANION_CLI
+        if (send_text != text_buf) {
+          int copy_n = send_len < (int)sizeof(text_buf) - 1 ? send_len : (int)sizeof(text_buf) - 1;
+          memcpy(text_buf, send_text, copy_n);
+          send_text = text_buf;
+          send_len  = copy_n;
+        }
+        text_buf[send_len] = '\0';
         if (sendGroupMessageWithCyr2LatMap(msg_timestamp, channel.channel, _prefs.node_name, send_text, send_len,
                                            text, orig_len, transformed)) {
-#else
-        if (sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, send_text, send_len)) {
-#endif
+          if (_ui) _ui->newOutgoingMsg(channel.name, send_text, false);
           writeOKFrame();
         } else {
           writeErrFrame(ERR_CODE_NOT_FOUND);
@@ -2488,7 +2566,6 @@ void MyMesh::checkSerialInterface() {
 void MyMesh::loop() {
   BaseChatMesh::loop();
 
-#ifdef WITH_COMPANION_CLI
   if (_pending_reboot_at && millisHasNowPassed(_pending_reboot_at)) {
 #ifdef NRF52_PLATFORM
     bool ble_busy = _serial && _serial->isConnected();
@@ -2533,7 +2610,6 @@ void MyMesh::loop() {
       board.powerOff();
     }
   }
-#endif
 
 #ifdef WITH_WIFI_SWITCHING
   checkWifiConnection();
@@ -2671,6 +2747,8 @@ void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf) {
   }
 }
 
+#endif
+
 bool MyMesh::sendGroupMessageWithCyr2LatMap(uint32_t timestamp, mesh::GroupChannel& channel, const char* sender_name,
                                             const char* text, int text_len, const char* original_text,
                                             int original_len, bool record_map) {
@@ -2754,6 +2832,8 @@ int MyMesh::mapCyr2LatChannelRawLog(const uint8_t* raw, int len, uint8_t* mapped
   }
   return 0;
 }
+
+#ifdef WITH_COMPANION_CLI
 
 bool MyMesh::handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool is_remote) {
   if (strcmp(cmd, "pin") == 0) {
@@ -3079,6 +3159,8 @@ void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* c
   if (buf[0]) sendCliReplyChannel(ch_idx, buf);
 }
 
+#endif
+
 void MyMesh::setCyr2LatChannelsEnabled(bool enabled) {
   _cyr2lat_channels_enabled = enabled;
   _prefs.cyr2lat_channels = enabled ? 1 : 0;
@@ -3090,8 +3172,6 @@ void MyMesh::setCyr2LatContactsEnabled(bool enabled) {
   _prefs.cyr2lat_contacts = enabled ? 1 : 0;
   dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
 }
-
-#endif  // WITH_COMPANION_CLI
 
 #ifdef WITH_WIFI_SWITCHING
 
