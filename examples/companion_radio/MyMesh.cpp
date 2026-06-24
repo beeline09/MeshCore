@@ -2709,11 +2709,18 @@ void MyMesh::sendCliReplyPM(const ContactInfo& to, const char* buf) {
   }
 }
 
-void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf) {
+void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf, bool mirror_ui) {
   static char chunks[8][152];
   static char text[200];
   int n = splitCliReply(buf, chunks, 8);
   uint32_t now = getRTCClock()->getCurrentTimeUnique();
+  const char* channel_name = "TerminalCLI";
+#ifdef DISPLAY_CLASS
+  if (mirror_ui) {
+    ChannelDetails ch;
+    if (getChannel(ch_idx, ch) && ch.name[0]) channel_name = ch.name;
+  }
+#endif
 
   for (int i = 0; i < n; i++) {
     if (n > 1)
@@ -2738,6 +2745,9 @@ void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf) {
     if (fi + tlen > MAX_FRAME_SIZE) tlen = MAX_FRAME_SIZE - fi;
     memcpy(&out_frame[fi], text, tlen); fi += tlen;
     addToOfflineQueue(out_frame, fi);
+#ifdef DISPLAY_CLASS
+    if (mirror_ui && _ui) _ui->newMsg(0, channel_name, text, offline_queue_len);
+#endif
     now++;  // unique timestamp per chunk
   }
 
@@ -3130,7 +3140,8 @@ void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const 
   if (buf[0]) sendCliReplyPM(from, buf);
 }
 
-void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* cmd) {
+void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* cmd,
+                               bool write_ack, bool mirror_ui_reply) {
   static char cmdBuf[256];
   strncpy(cmdBuf, cmd, sizeof(cmdBuf) - 1);
   cmdBuf[sizeof(cmdBuf) - 1] = '\0';
@@ -3155,8 +3166,8 @@ void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* c
     else      strcpy(buf, "ERR: CLI not initialized");
   }
   MESH_DEBUG_PRINTLN("CLI/Terminal reply(%zu): '%s'", strlen(buf), buf);
-  writeOKFrame(); // send OK before push so app completes the command exchange first
-  if (buf[0]) sendCliReplyChannel(ch_idx, buf);
+  if (write_ack) writeOKFrame(); // send OK before push so app completes the command exchange first
+  if (buf[0]) sendCliReplyChannel(ch_idx, buf, mirror_ui_reply);
 }
 
 #endif
