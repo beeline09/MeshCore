@@ -43,6 +43,8 @@ struct NodePrefs {
   uint32_t guard;
   uint8_t  allow_read_only;
   uint8_t  flood_max;
+  uint8_t  flood_max_unscoped;
+  uint8_t  flood_max_advert;
   uint8_t  interference_threshold;
   uint8_t  agc_reset_interval;    // secs / 4
   uint8_t  bridge_enabled;

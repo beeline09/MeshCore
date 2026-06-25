@@ -41,6 +41,7 @@ public:
   void disableSerial() { _serial->disable(); }
   virtual void msgRead(int msgcount) = 0;
   virtual void newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount, bool is_pm = false) = 0;
+  virtual void newOutgoingMsg(const char* to_name, const char* text, bool is_pm, bool is_room = false) {}
   virtual void notify(UIEventType t = UIEventType::none) = 0;
   virtual void loop() = 0;
 };

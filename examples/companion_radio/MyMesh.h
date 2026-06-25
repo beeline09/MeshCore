@@ -235,6 +235,10 @@ public:
   void setCyr2LatChannelsEnabled(bool enabled);
   void setCyr2LatContactsEnabled(bool enabled);
 
+  int  sendContactMsg(const char* name, const char* text, int len);
+  int  sendChannelMsg(const char* name, const char* text, int len);
+  int  calcSentBytes(const char* text, int len, bool is_channel) const;
+
 #ifdef WITH_WIFI_SWITCHING
   void switchCommsMode(uint8_t mode, int wifi_net_idx = 0);
   bool isWifiConnecting() const { return _wifi_connecting; }
@@ -369,7 +373,8 @@ private:
   bool                   _ts_from_messages = true;
 
   void handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const char* cmd);
-  void handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* cmd);
+  void handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* cmd,
+                         bool write_ack, bool mirror_ui_reply);
   void sendCliReplyPM(const ContactInfo& to, const char* buf);
   void sendCliReplyChannel(uint8_t ch_idx, const char* buf, bool mirror_ui = false);
   void injectChannelMsg(uint8_t ch_idx, const char* sender_name, uint8_t path_len, int8_t snr_x4, uint32_t ts, const char* text);

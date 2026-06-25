@@ -28,7 +28,7 @@ void CompanionCLICallbacks::sendSelfAdvertisement(int delay_millis, bool flood) 
 }
 
 void CompanionCLICallbacks::setTxPower(int8_t power_dbm) {
-  radio_set_tx_power(power_dbm);
+  radio_driver.setTxPower(power_dbm);
 }
 
 void CompanionCLICallbacks::formatNeighborsReply(char* reply) {
@@ -76,7 +76,7 @@ void CompanionCLICallbacks::clearStats() {
 }
 
 void CompanionCLICallbacks::applyTempRadioParams(float freq, float bw, uint8_t sf, uint8_t cr, int timeout_mins) {
-  radio_set_params(freq, bw, sf, cr);
+  radio_driver.setParams(freq, bw, sf, cr);
 }
 
 void CompanionCLICallbacks::setRxBoostedGain(bool enable) {

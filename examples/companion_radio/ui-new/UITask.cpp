@@ -1118,12 +1118,16 @@ public:
 #endif
     if (c == KEY_LEFT || c == KEY_PREV || c == KEY_UP) {
       _page = (_page + HomePage::Count - 1) % HomePage::Count;
+#if UI_SENSORS_PAGE == 1
       if (_page == HomePage::SENSORS) sensors_scroll_offset = 0;
+#endif
       return true;
     }
     if (c == KEY_NEXT || c == KEY_RIGHT || c == KEY_DOWN) {
       _page = (_page + 1) % HomePage::Count;
+#if UI_SENSORS_PAGE == 1
       if (_page == HomePage::SENSORS) sensors_scroll_offset = 0;
+#endif
       return true;
     }
 #ifndef WITH_WIFI_SWITCHING
