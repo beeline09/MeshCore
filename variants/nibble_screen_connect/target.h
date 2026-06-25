@@ -1,15 +1,4 @@
 #pragma once
-// POSIX timezone string for the clock display page.
-// Examples: "UTC0"           UTC
-//           "MSK-3"          Moscow (UTC+3)
-//           "EET-2"          Eastern Europe (UTC+2)
-//           "CET-1CEST,M3.5.0,M10.5.0/3"  Central Europe with DST
-// Override in platformio.ini: -DDISPLAY_TZ="MSK-3"
-// See: https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html
-#ifndef DISPLAY_TZ
-#  define DISPLAY_TZ  "UTC0"
-#endif
-
 
 #define RADIOLIB_STATIC_ONLY 1
 #include <RadioLib.h>
@@ -34,8 +23,5 @@ extern SensorManager sensors;
 #endif
 
 bool radio_init();
-uint32_t radio_get_rng_seed();
-void radio_set_params(float freq, float bw, uint8_t sf, uint8_t cr);
-void radio_set_tx_power(int8_t dbm);
 mesh::LocalIdentity radio_new_identity();
 

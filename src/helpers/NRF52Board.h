@@ -58,10 +58,10 @@ public:
   virtual bool getBootloaderVersion(char* version, size_t max_len) override;
   virtual bool startOTAUpdate(const char *id, char reply[]) override;
   virtual void sleep(uint32_t secs) override;
+  bool isExternalPowered() override;
 
 #ifdef NRF52_POWER_MANAGEMENT
   static void lpcompDownHandler();
-  bool isExternalPowered() override;
   uint16_t getBootVoltage() override { return boot_voltage_mv; }
   virtual uint32_t getResetReason() const override { return reset_reason; }
   uint8_t getShutdownReason() const override { return shutdown_reason; }
@@ -73,7 +73,7 @@ public:
 /*
  * The NRF52 has an internal DC/DC regulator that allows increased efficiency
  * compared to the LDO regulator. For being able to use it, the module/board
- * needs to have the required inductors and and capacitors populated. If the
+ * needs to have the required inductors and capacitors populated. If the
  * hardware requirements are met, this subclass can be used to enable the DC/DC
  * regulator.
  */
