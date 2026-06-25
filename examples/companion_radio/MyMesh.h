@@ -235,10 +235,6 @@ public:
   void setCyr2LatChannelsEnabled(bool enabled);
   void setCyr2LatContactsEnabled(bool enabled);
 
-  int  sendContactMsg(const char* name, const char* text, int len);
-  int  sendChannelMsg(const char* name, const char* text, int len);
-  int  calcSentBytes(const char* text, int len, bool is_channel) const;
-
 #ifdef WITH_WIFI_SWITCHING
   void switchCommsMode(uint8_t mode, int wifi_net_idx = 0);
   bool isWifiConnecting() const { return _wifi_connecting; }
