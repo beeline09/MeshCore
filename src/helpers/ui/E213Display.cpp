@@ -234,13 +234,12 @@ void E213Display::endFrame() {
   uint32_t crc = display_crc.finalize();
   if (crc != last_display_crc_value) {
     last_display_crc_value = crc;
-    if (!_suppress_full_refresh && ++_partial_refresh_count >= EINK_FULL_REFRESH_INTERVAL) {
+    if (++_partial_refresh_count >= EINK_FULL_REFRESH_INTERVAL) {
       display->fastmodeOff();
       display->update();
       display->fastmodeOn();
       _partial_refresh_count = 0;
     } else {
-      if (_suppress_full_refresh) _partial_refresh_count = 0;
       display->update();
     }
   }

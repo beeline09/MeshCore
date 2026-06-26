@@ -3168,8 +3168,7 @@ void MyMesh::switchCommsMode(uint8_t mode, int wifi_net_idx) {
     WiFi.disconnect(true);
     _serial = nullptr;  // USB is managed externally
   } else {
-    // BLE — explicit user switch: cancel background retry, shut down WiFi
-    _wifi_bg_retry_at = 0;
+    // BLE
     WiFi.disconnect(true);
     _wifi_prefs.comms_mode = COMMS_MODE_BLE;
     saveWifiPrefs();
@@ -3179,17 +3178,6 @@ void MyMesh::switchCommsMode(uint8_t mode, int wifi_net_idx) {
 }
 
 void MyMesh::checkWifiConnection() {
-  // Background retry: try reconnecting to WiFi every 30 sec after fallback
-  if (!_wifi_connecting && _wifi_bg_retry_at && millis() >= _wifi_bg_retry_at) {
-    _wifi_bg_retry_at = 0;
-    if (_wifi_net_idx >= 0 && _wifi_net_idx < _wifi_prefs.network_count) {
-      _wifi_connecting = true;
-      _wifi_connect_start = millis();
-      WiFi.begin(_wifi_prefs.networks[_wifi_net_idx].ssid,
-                 _wifi_prefs.networks[_wifi_net_idx].password);
-    }
-  }
-
   if (!_wifi_connecting) return;
 
   if (WiFi.status() == WL_CONNECTED) {
@@ -3207,17 +3195,11 @@ void MyMesh::checkWifiConnection() {
     _wifi_iface.begin(port);
     _serial = &_wifi_iface;
     _serial->enable();
-    if (_wifi_prefs.comms_mode != COMMS_MODE_WIFI) {
-      _wifi_prefs.comms_mode = COMMS_MODE_WIFI;
-      saveWifiPrefs();
-    }
   } else if (millis() - _wifi_connect_start > 15000) {
-    // Timeout — revert to BLE, keep WiFi radio on for background retry
     _wifi_connecting = false;
     _wifi_prefs.comms_mode = COMMS_MODE_BLE;
     saveWifiPrefs();
-    WiFi.disconnect(false);  // keep WiFi radio on
-    _wifi_bg_retry_at = millis() + 30000;
+    WiFi.disconnect(true);
     // _serial already points to _ble_iface (set in switchCommsMode)
   }
 }

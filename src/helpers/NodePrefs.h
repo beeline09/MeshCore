@@ -80,5 +80,4 @@ struct NodePrefs {
   uint8_t  ui_max_unread_idx;      // 0=16, 1=32, 2=64 messages in unread buffer
   uint8_t  ui_max_log_idx;         // 0=16, 1=32, 2=64 messages in history log
   uint32_t ui_charge_uptime_base;  // accumulated seconds across soft-reboots (charge cycle)
-  uint8_t  ui_eink_antighost;      // 0=OFF (default), 1=ON
 };
