@@ -239,6 +239,7 @@ void E213Display::endFrame() {
       display->update();
       display->fastmodeOn();
       _partial_refresh_count = 0;
+      last_display_crc_value = ~crc;  // force re-draw: fastmodeOn may blank the panel
     } else {
       display->update();
     }
