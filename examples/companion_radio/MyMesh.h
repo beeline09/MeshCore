@@ -385,6 +385,7 @@ private:
   bool                _wifi_connecting = false;
   uint32_t            _wifi_connect_start = 0;
   int                 _wifi_net_idx = -1;
+  uint32_t            _wifi_bg_retry_at = 0;
 #endif
 };
 
