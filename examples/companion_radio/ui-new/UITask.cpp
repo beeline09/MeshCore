@@ -149,6 +149,8 @@ class HomeScreen : public UIScreen {
   int           _settings_sel   = 0;
   int           _settings_scroll = 0;   // first visible item index
   int           _settings_visible = 4;  // updated in render(), used in handleInput()
+  bool          _rot_visible = true;    // false for non-eInk displays; set in render()
+  int           _eff_settings_n = SETTINGS_N;  // effective count (may exclude Rotation)
   unsigned long _pin_show_until = 0;
   int           _pm_clock_mode  = 1;   // 0=all msgs switch screen, 1=PM inline only
 
@@ -829,13 +831,17 @@ public:
         static const char* ts_vals[3]   = { "a+g", "gps", "adv" };
 #endif
         const int CURSOR_W = 6 * hdr_size, LINE_H = 8 * hdr_size + 2, Y0 = content_y;
+        _rot_visible = _task->isEinkDisplay();
+        _eff_settings_n = _rot_visible ? SETTINGS_N : SETTINGS_N - 1;
         _settings_visible = (display.height() - Y0) / LINE_H;
         display.setColor(DisplayDriver::LIGHT);
-        for (int i = _settings_scroll; i < SETTINGS_N && i < _settings_scroll + _settings_visible; i++) {
-          int y = Y0 + (i - _settings_scroll) * LINE_H;
+        for (int vis = _settings_scroll; vis < _eff_settings_n && vis < _settings_scroll + _settings_visible; vis++) {
+          // map visual index to logical (skip ROT slot for non-eInk)
+          int i = (!_rot_visible && vis >= SETTINGS_ROT_IDX) ? vis + 1 : vis;
+          int y = Y0 + (vis - _settings_scroll) * LINE_H;
           display.setColor(DisplayDriver::LIGHT);
           display.setCursor(0, y);
-          display.print(_settings_sel == i ? ">" : " ");
+          display.print(_settings_sel == vis ? ">" : " ");
           display.setCursor(CURSOR_W, y);
           // label
           const char* lbl = "Back";
@@ -1010,9 +1016,9 @@ public:
       }
       // ↑ (KEY_UP) = previous item, with wrap-around scroll
       if (c == KEY_UP) {
-        _settings_sel = (_settings_sel + SETTINGS_N - 1) % SETTINGS_N;
-        if (_settings_sel == SETTINGS_N - 1) {
-          _settings_scroll = (SETTINGS_N > _settings_visible) ? (SETTINGS_N - _settings_visible) : 0;
+        _settings_sel = (_settings_sel + _eff_settings_n - 1) % _eff_settings_n;
+        if (_settings_sel == _eff_settings_n - 1) {
+          _settings_scroll = (_eff_settings_n > _settings_visible) ? (_eff_settings_n - _settings_visible) : 0;
         } else if (_settings_sel < _settings_scroll) {
           _settings_scroll = _settings_sel;
         }
@@ -1020,7 +1026,7 @@ public:
       }
       // ↓ (KEY_DOWN) or KEY_NEXT = next item, with wrap-around scroll
       if (c == KEY_DOWN || c == KEY_NEXT) {
-        _settings_sel = (_settings_sel + 1) % SETTINGS_N;
+        _settings_sel = (_settings_sel + 1) % _eff_settings_n;
         if (_settings_sel == 0) _settings_scroll = 0;
         else if (_settings_sel >= _settings_scroll + _settings_visible) _settings_scroll = _settings_sel - _settings_visible + 1;
         return true;
@@ -1030,31 +1036,33 @@ public:
       // For binary items direction doesn't matter; for multi-value LEFT reverses.
       if (c == KEY_RIGHT || c == KEY_ENTER || c == KEY_LEFT) {
         bool fwd = (c != KEY_LEFT);
-        if (_settings_sel == SETTINGS_BACK_IDX) {
+        // map visual sel to logical index (skip ROT slot for non-eInk)
+        int sel = (!_rot_visible && _settings_sel >= SETTINGS_ROT_IDX) ? _settings_sel + 1 : _settings_sel;
+        if (sel == SETTINGS_BACK_IDX) {
           _in_settings = false;
-        } else if (_settings_sel == SETTINGS_PM_IDX) {
+        } else if (sel == SETTINGS_PM_IDX) {
           _pm_clock_mode = (_pm_clock_mode + 1) % 2;  // binary — same either way
           _node_prefs->ui_pm_clock_mode = _pm_clock_mode;
           the_mesh.savePrefs();
-        } else if (_settings_sel == SETTINGS_DIM_IDX) {
+        } else if (sel == SETTINGS_DIM_IDX) {
           _task->setClockDimMode((_task->getClockDimMode() + 1) % 2);
           the_mesh.savePrefs();
-        } else if (_settings_sel == SETTINGS_C2L_CH_IDX) {
+        } else if (sel == SETTINGS_C2L_CH_IDX) {
           the_mesh.setCyr2LatChannelsEnabled(!the_mesh.isCyr2LatChannelsEnabled());
-        } else if (_settings_sel == SETTINGS_C2L_DM_IDX) {
+        } else if (sel == SETTINGS_C2L_DM_IDX) {
           the_mesh.setCyr2LatContactsEnabled(!the_mesh.isCyr2LatContactsEnabled());
 #ifdef WITH_COMPANION_CLI
-        } else if (_settings_sel == 0) {
+        } else if (sel == 0) {
           int m = the_mesh.getChatMode();
           the_mesh.setChatMode(fwd ? (m + 1) % 4 : (m + 3) % 4);
-        } else if (_settings_sel == 1) {
+        } else if (sel == 1) {
           _pin_show_until = millis() + 3000;
-        } else if (_settings_sel == 2) {
+        } else if (sel == 2) {
           int m = the_mesh.getTimesyncMode();
           the_mesh.setTimesyncMode(fwd ? (m + 1) % 3 : (m + 2) % 3);
 #endif
 #ifdef WITH_WIFI_SWITCHING
-        } else if (_settings_sel == SETTINGS_COMMS_IDX) {
+        } else if (sel == SETTINGS_COMMS_IDX) {
           if (!_wifi_wait && fwd) {
             _in_wifi_select   = true;
             _wifi_sel         = 0;
@@ -1065,13 +1073,13 @@ public:
             WiFi.scanNetworks(true);  // async
           }
 #endif
-        } else if (_settings_sel == SETTINGS_ROT_IDX && _node_prefs) {
+        } else if (sel == SETTINGS_ROT_IDX && _node_prefs) {
           int r = _node_prefs->ui_display_rotation;
           r = fwd ? (r + 1) % 4 : (r + 3) % 4;
           _node_prefs->ui_display_rotation = r;
           _task->setDisplayRotation(r);
           the_mesh.savePrefs();
-        } else if (_settings_sel == SETTINGS_UNREAD_IDX && _node_prefs) {
+        } else if (sel == SETTINGS_UNREAD_IDX && _node_prefs) {
           int idx = _node_prefs->ui_max_unread_idx;
           idx = fwd ? (idx + 1) % 3 : (idx + 2) % 3;
           _node_prefs->ui_max_unread_idx = idx;
@@ -1079,7 +1087,7 @@ public:
           _task->updateMsgMaxSizes(size_table[_node_prefs->ui_max_unread_idx],
                                    size_table[_node_prefs->ui_max_log_idx]);
           the_mesh.savePrefs();
-        } else if (_settings_sel == SETTINGS_LOG_IDX && _node_prefs) {
+        } else if (sel == SETTINGS_LOG_IDX && _node_prefs) {
           int idx = _node_prefs->ui_max_log_idx;
           idx = fwd ? (idx + 1) % 3 : (idx + 2) % 3;
           _node_prefs->ui_max_log_idx = idx;
