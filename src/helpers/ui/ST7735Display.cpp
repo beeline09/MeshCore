@@ -31,6 +31,13 @@ bool ST7735Display::begin() {
 #endif
     digitalWrite(PIN_TFT_RST, HIGH);
 
+#if defined(USE_PIN_TFT) && defined(ESP32_PLATFORM)
+    // Map the TFT pins onto the FSPI host before the driver inits SPI. ESP32's
+    // SPIClass::begin() early-returns once a bus is up, so the no-arg begin()
+    // that Adafruit_ST77xx calls internally won't override these pins.
+    spi_tft.begin(PIN_TFT_SCL, -1, PIN_TFT_SDA, PIN_TFT_CS);
+#endif
+
 #if defined(HELTEC_T1)
     display.initR(INITR_MINI160x80);
     display.setRotation(DISPLAY_ROTATION);
