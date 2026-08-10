@@ -63,9 +63,11 @@ build_one() {
 
   cp -f ".pio/build/${pio_env}/firmware.uf2" "out/${out_name}"
   cp -f ".pio/build/${pio_env}/firmware.uf2" "out/${versioned_name}"
-  if [ -f ".pio/build/${pio_env}/firmware.zip" ]; then
-    cp -f ".pio/build/${pio_env}/firmware.zip" "out/Darktec_${role_slug}_${chem_slug}_${cells}s.zip"
+  if [ ! -f ".pio/build/${pio_env}/firmware.zip" ]; then
+    echo "ERROR: missing OTA firmware.zip for ${pio_env} (needed for Serial DFU)"
+    exit 1
   fi
+  cp -f ".pio/build/${pio_env}/firmware.zip" "out/Darktec_${role_slug}_${chem_slug}_${cells}s.zip"
   echo "Wrote out/${out_name}"
 }
 
