@@ -1,7 +1,7 @@
 #pragma once
 
 /*
- * Химия батареи Darktec → диапазон % на UI и пороги power-management nRF52.
+ * Химия батареи Darktec → диапазон % на UI (BATT_MIN/MAX).
  *
  * Аппаратный лимит: напряжение пакета ≤ 5 В.
  *   Li-ion / LiFePO4 : только 1S
@@ -11,9 +11,11 @@
  *   -D BATTERY_CHEMISTRY=BATTERY_CHEM_LIFEPO4
  *   -D BATTERY_CELLS=1
  *
- * Значения LPCOMP REFSEL для не-Li-ion — ближайшие оценки по эмпирической
- * калибровке класса ProMicro (11≈3.0 В, 12≈3.9 В, 4≈4.15 В);
- * их нужно проверить на железе (делитель Darktec: 100к/100к).
+ * Важно (cutoff / recovery):
+ * Жёсткий SYSTEMOFF через boot-lock и LPCOMP DOWN на этой плате с boost/DCDC
+ * блокирует возврат к жизни при подъёме напряжения пакета — оживает только USB.
+ * Поэтому boot-lock и runtime LPCOMP отключены (0). Пороги химии используются
+ * для шкалы % на дисплее, без аппаратного «кирпича».
  */
 
 #define BATTERY_CHEM_LIION    1
@@ -49,44 +51,18 @@
 #if BATTERY_CHEMISTRY == BATTERY_CHEM_LIION
 #define BATT_CELL_EMPTY_MV     3000
 #define BATT_CELL_FULL_MV      4200
-#define BATT_CELL_BOOTLOCK_MV  3350
-#define BATT_CELL_CRITICAL_MV  3000
-#define BATT_CELL_WAKE_MV      3900
-#define BATT_LPCOMP_LOW_REFSEL   11
-#define BATT_LPCOMP_WAKE_REFSEL  12
 
 #elif BATTERY_CHEMISTRY == BATTERY_CHEM_LIFEPO4
-#define BATT_CELL_EMPTY_MV     2700
+#define BATT_CELL_EMPTY_MV     2500
 #define BATT_CELL_FULL_MV      3650
-#define BATT_CELL_BOOTLOCK_MV  3000
-#define BATT_CELL_CRITICAL_MV  2700
-#define BATT_CELL_WAKE_MV      3400
-/* Нет эмпирической точки между ~3.0 В и ~3.9 В; wake=11 (пробуждение по USB всё равно работает). */
-#define BATT_LPCOMP_LOW_REFSEL   11
-#define BATT_LPCOMP_WAKE_REFSEL  11
 
 #elif BATTERY_CHEMISTRY == BATTERY_CHEM_LTO
-#define BATT_CELL_EMPTY_MV     1900
+#define BATT_CELL_EMPTY_MV     1800
 #define BATT_CELL_FULL_MV      2500
-#define BATT_CELL_BOOTLOCK_MV  2100
-#define BATT_CELL_CRITICAL_MV  1900
-#define BATT_CELL_WAKE_MV      2300
-#if BATTERY_CELLS == 1
-/* Оценка для диапазона ~2.0 В — проверить на железе. */
-#define BATT_LPCOMP_LOW_REFSEL   10
-#define BATT_LPCOMP_WAKE_REFSEL  10
-#else
-/* 2S: critical≈3800 → REFSEL 12; wake≈4600 → REFSEL 13 (оценка — проверить на железе). */
-#define BATT_LPCOMP_LOW_REFSEL   12
-#define BATT_LPCOMP_WAKE_REFSEL  13
-#endif
 #endif
 
-#define BATT_PACK_EMPTY_MV     (BATT_CELL_EMPTY_MV    * BATTERY_CELLS)
-#define BATT_PACK_FULL_MV      (BATT_CELL_FULL_MV     * BATTERY_CELLS)
-#define BATT_PACK_BOOTLOCK_MV  (BATT_CELL_BOOTLOCK_MV * BATTERY_CELLS)
-#define BATT_PACK_CRITICAL_MV  (BATT_CELL_CRITICAL_MV * BATTERY_CELLS)
-#define BATT_PACK_WAKE_MV      (BATT_CELL_WAKE_MV     * BATTERY_CELLS)
+#define BATT_PACK_EMPTY_MV  (BATT_CELL_EMPTY_MV * BATTERY_CELLS)
+#define BATT_PACK_FULL_MV   (BATT_CELL_FULL_MV  * BATTERY_CELLS)
 
 #if BATT_PACK_FULL_MV > 5000
 #error "Полное напряжение пакета превышает лимит входа батареи Darktec 5 В"
@@ -99,19 +75,22 @@
 #define BATT_MAX_MILLIVOLTS  BATT_PACK_FULL_MV
 #endif
 
+/* 0 = boot-lock выключен (иначе SYSTEMOFF + LPCOMP мешают подъёму с boost). */
 #ifndef PWRMGT_VOLTAGE_BOOTLOCK
-#define PWRMGT_VOLTAGE_BOOTLOCK  BATT_PACK_BOOTLOCK_MV
-#endif
-#ifndef PWRMGT_VOLTAGE_CRITICAL
-#define PWRMGT_VOLTAGE_CRITICAL  BATT_PACK_CRITICAL_MV
-#endif
-#ifndef AUTO_SHUTDOWN_MILLIVOLTS
-#define AUTO_SHUTDOWN_MILLIVOLTS  BATT_PACK_CRITICAL_MV
+#define PWRMGT_VOLTAGE_BOOTLOCK  0
 #endif
 
-#ifndef PWRMGT_LPCOMP_LOW_REFSEL
-#define PWRMGT_LPCOMP_LOW_REFSEL  BATT_LPCOMP_LOW_REFSEL
+/* Критический порог только для справочной семантики хелпера; hard cutoff выключен. */
+#ifndef PWRMGT_VOLTAGE_CRITICAL
+#define PWRMGT_VOLTAGE_CRITICAL  BATT_PACK_EMPTY_MV
 #endif
+
+/* 0 = runtime LPCOMP DOWN выключен. */
+#ifndef PWRMGT_LPCOMP_LOW_REFSEL
+#define PWRMGT_LPCOMP_LOW_REFSEL  0
+#endif
+
+/* Wake REFSEL не используется без low-alert; оставляем безопасный дефолт. */
 #ifndef PWRMGT_LPCOMP_REFSEL
-#define PWRMGT_LPCOMP_REFSEL  BATT_LPCOMP_WAKE_REFSEL
+#define PWRMGT_LPCOMP_REFSEL  0
 #endif
