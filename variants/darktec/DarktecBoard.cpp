@@ -12,16 +12,23 @@ const PowerMgtConfig power_config = {
 };
 
 void DarktecBoard::initiateShutdown(uint8_t reason) {
-  digitalWrite(SX126X_POWER_EN, LOW);
-
+  // LOW_VOLTAGE / BOOT_PROTECT: ADC sleep/wake, без SYSTEMOFF+LPCOMP.
   if (reason == SHUTDOWN_REASON_LOW_VOLTAGE ||
       reason == SHUTDOWN_REASON_BOOT_PROTECT) {
-    configureVoltageWake(power_config.lpcomp_ain_channel, power_config.lpcomp_refsel);
+    darktec::waitForBatteryRecovery(*this, SX126X_POWER_EN);
+    return;  // недостижимо
   }
 
+  // Прочие причины (USER и т.п.) — прежнее поведение.
+  digitalWrite(SX126X_POWER_EN, LOW);
   enterSystemOff(reason);
 }
 #endif
+
+void DarktecBoard::powerOff() {
+  // Companion AUTO_SHUTDOWN и ручной powerOff → тот же ADC recovery-цикл.
+  darktec::waitForBatteryRecovery(*this, SX126X_POWER_EN);
+}
 
 void DarktecBoard::begin() {
     NRF52BoardDCDC::begin();
@@ -41,14 +48,12 @@ void DarktecBoard::begin() {
 
     pinMode(SX126X_POWER_EN, OUTPUT);
 #ifdef NRF52_POWER_MANAGEMENT
-    // Датчик батареи: D17 → P0.31 → AIN7.
-    // Boot-lock (voltage_bootlock) и LPCOMP DOWN (lpcomp_low_refsel) для Darktec
-    // выключены (=0): иначе после cutoff плата не оживает при подъёме VBAT
-    // (boost/DCDC), только от USB. Шкала % берётся из BATT_MIN/MAX.
-    checkBootVoltage(&power_config);
-    if (power_config.lpcomp_low_refsel) {
-      configureLowVoltageAlert(power_config.lpcomp_ain_channel, power_config.lpcomp_low_refsel);
+    // Boot-lock по АЦП (химия): не SYSTEMOFF, а ожидание подъёма VBAT / USB.
+    if (darktec::batteryBelowThreshold(*this, PWRMGT_VOLTAGE_BOOTLOCK)) {
+      darktec::waitForBatteryRecovery(*this, SX126X_POWER_EN);
     }
+    // LPCOMP runtime alert не включаем (lpcomp_low_refsel=0).
+    (void)power_config;
 #endif
     digitalWrite(SX126X_POWER_EN, HIGH);
     delay(10);   // дать sx1262 время на включение

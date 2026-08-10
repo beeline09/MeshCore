@@ -3,7 +3,7 @@
 #include <MeshCore.h>
 #include <Arduino.h>
 #include <helpers/NRF52Board.h>
-#include "DarktecBattPowerHelper.h"
+#include "DarktecAdcPower.h"
 
 #define P_LORA_NSS 13 //P1.13 45
 #define P_LORA_DIO_1 11 //P0.10 10
@@ -44,9 +44,7 @@ public:
       raw += analogRead(PIN_VBAT_READ);
     }
     raw = raw / BATTERY_SAMPLES;
-    uint16_t mv = (uint16_t)(adc_mult * raw);
-    // В IRQ: согласовать critical химии с хардкодом 3000 мВ в базовом LPCOMP-обработчике.
-    return darktec::adjustBattMilliVoltsForPowerMgr(mv);
+    return (uint16_t)(adc_mult * raw);
   }
 
   bool setAdcMultiplier(float multiplier) override {
@@ -80,7 +78,6 @@ public:
       return 0;
   }
 
-  void powerOff() override {
-    sd_power_system_off();
-  }
+  // Не sd_power_system_off(): иначе нет пробуждения по VBAT.
+  void powerOff() override;
 };
