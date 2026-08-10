@@ -28,7 +28,7 @@ on:
       - ".github/actions/setup-build-environment/**"
 
 concurrency:
-  group: darktec-firmware-${{ github.ref }}
+  group: darktec-firmware
   cancel-in-progress: true
 
 jobs:
