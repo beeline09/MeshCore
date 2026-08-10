@@ -59,8 +59,10 @@ jobs:
         run: |
           cd out
           zip -9 Darktec_uf2_latest.zip \
-            Darktec_companion_radio_ble_*.uf2 \
-            Darktec_repeater_*.uf2
+            Darktec_companion_radio_ble_*s.uf2 \
+            Darktec_repeater_*s.uf2
+          echo "Zip contents:"
+          unzip -l Darktec_uf2_latest.zip
 
       - name: Publish / update darktec-latest Release
         uses: softprops/action-gh-release@v3
@@ -77,9 +79,10 @@ jobs:
             Файлы `Darktec_*_{liion|lifepo4|lto}_{1|2}s.uf2` — для drag-and-drop DFU.
           make_latest: true
           overwrite_files: true
+          fail_on_unmatched_files: true
           files: |
-            out/Darktec_companion_radio_ble_*.uf2
-            out/Darktec_repeater_*.uf2
+            out/Darktec_companion_radio_ble_*s.uf2
+            out/Darktec_repeater_*s.uf2
             out/Darktec_uf2_latest.zip
 
       - name: Notify Pages site to sync manifest
