@@ -68,4 +68,9 @@ if [ -n "${GITHUB_ENV:-}" ]; then
   cat /tmp/darktec-version.env >> "$GITHUB_ENV"
 fi
 
+# Job outputs for matrix workflows (version → build/release).
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  cat /tmp/darktec-version.env >> "$GITHUB_OUTPUT"
+fi
+
 echo "Darktec version → ${VERSION} (tag ${TAG}, prev ${PREV_TAG:-none})"

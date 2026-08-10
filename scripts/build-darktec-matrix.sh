@@ -2,6 +2,12 @@
 # Build all Darktec roles × battery chemistry × battery protect into out/.
 # Filenames: Darktec_{role}_{chem}_{cells}s_{adc|off}.{uf2,zip}
 #
+# Optional filters (CI shards / local subset):
+#   DARKTEC_ROLE_SLUG=companion_radio_ble
+#   DARKTEC_PIO_ENV=Darktec_companion_radio_ble
+# When set, only matching role(s) are built (chem×protect still full).
+# When unset, builds the full 8×4×2 = 64 matrix.
+#
 # NOTE: do NOT call build.sh per variant — it runs `rm -rf out` on every invoke.
 set -euo pipefail
 
@@ -43,6 +49,26 @@ ROLES=(
   "Darktec_sensor sensor"
   "Darktec_kiss_modem kiss_modem"
 )
+
+if [ -n "${DARKTEC_PIO_ENV:-}${DARKTEC_ROLE_SLUG:-}" ]; then
+  FILTERED=()
+  for role in "${ROLES[@]}"; do
+    read -r pio_env role_slug <<<"$role"
+    if [ -n "${DARKTEC_PIO_ENV:-}" ] && [ "$pio_env" != "$DARKTEC_PIO_ENV" ]; then
+      continue
+    fi
+    if [ -n "${DARKTEC_ROLE_SLUG:-}" ] && [ "$role_slug" != "$DARKTEC_ROLE_SLUG" ]; then
+      continue
+    fi
+    FILTERED+=("$role")
+  done
+  if [ "${#FILTERED[@]}" -eq 0 ]; then
+    echo "ERROR: no roles matched filter DARKTEC_PIO_ENV=${DARKTEC_PIO_ENV:-} DARKTEC_ROLE_SLUG=${DARKTEC_ROLE_SLUG:-}"
+    exit 1
+  fi
+  ROLES=("${FILTERED[@]}")
+  echo "Role filter active: ${#ROLES[@]} role(s) → ${ROLES[*]}"
+fi
 
 EXPECTED=$(( ${#ROLES[@]} * ${#VARIANTS[@]} * ${#PROTECTS[@]} ))
 

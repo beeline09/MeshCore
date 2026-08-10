@@ -2,6 +2,14 @@ name: Build Darktec Firmwares
 
 # Push to south_edition → versioned Darktec release (v{BASE}bN) + darktec-latest
 # BASE from MyMesh.h (Rogovogor major); N increments each push.
+#
+# Parallel layout:
+#   version  → compute VERSION/TAG + changelog (once; avoids bN races)
+#   build    → matrix by role (8 jobs × chem×protect = 8 builds each)
+#   release  → gather artifacts, zip bundle, publish (only if all shards OK)
+#
+# fail-fast: false — prefer seeing every failing role in one run rather than
+# cancelling siblings early. Set true to abort other shards on first failure.
 
 permissions:
   contents: write
@@ -38,8 +46,58 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  version:
     runs-on: ubuntu-latest
+    outputs:
+      VERSION: ${{ steps.compute.outputs.VERSION }}
+      TAG: ${{ steps.compute.outputs.TAG }}
+      PREV_TAG: ${{ steps.compute.outputs.PREV_TAG }}
+    steps:
+      - name: Clone Repo
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Compute Darktec version
+        id: compute
+        env:
+          FIRMWARE_REPO: beeline09/MeshCore
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: /usr/bin/env bash scripts/darktec-version.sh
+
+      - name: Build changelog
+        run: /usr/bin/env bash scripts/darktec-changelog.sh /tmp/darktec-changelog.md
+
+      - name: Upload changelog
+        uses: actions/upload-artifact@v7
+        with:
+          name: darktec-meta-${{ steps.compute.outputs.VERSION }}
+          path: /tmp/darktec-changelog.md
+
+  build:
+    needs: version
+    runs-on: ubuntu-latest
+    strategy:
+      # false: all role shards finish so one run surfaces every failure.
+      fail-fast: false
+      matrix:
+        include:
+          - pio_env: Darktec_companion_radio_ble
+            role_slug: companion_radio_ble
+          - pio_env: Darktec_companion_radio_usb
+            role_slug: companion_radio_usb
+          - pio_env: Darktec_repeater
+            role_slug: repeater
+          - pio_env: Darktec_repeater_bridge_rs232_serial1
+            role_slug: repeater_bridge_rs232
+          - pio_env: Darktec_room_server
+            role_slug: room_server
+          - pio_env: Darktec_terminal_chat
+            role_slug: terminal_chat
+          - pio_env: Darktec_sensor
+            role_slug: sensor
+          - pio_env: Darktec_kiss_modem
+            role_slug: kiss_modem
     steps:
       - name: Clone Repo
         uses: actions/checkout@v6
@@ -49,30 +107,52 @@ jobs:
       - name: Setup Build Environment
         uses: ./.github/actions/setup-build-environment
 
-      - name: Compute Darktec version
+      - name: Build Darktec role matrix
         env:
-          FIRMWARE_REPO: beeline09/MeshCore
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: /usr/bin/env bash scripts/darktec-version.sh
-
-      - name: Build changelog
-        run: /usr/bin/env bash scripts/darktec-changelog.sh /tmp/darktec-changelog.md
-
-      - name: Build Darktec matrix
-        env:
-          FIRMWARE_VERSION: ${{ env.VERSION }}
+          FIRMWARE_VERSION: ${{ needs.version.outputs.VERSION }}
+          DARKTEC_ROLE_SLUG: ${{ matrix.role_slug }}
+          DARKTEC_PIO_ENV: ${{ matrix.pio_env }}
         run: /usr/bin/env bash scripts/build-darktec-matrix.sh
 
-      - name: Upload Workflow Artifacts
+      - name: Upload role artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: darktec-firmwares-${{ env.VERSION }}
+          name: darktec-build-${{ matrix.role_slug }}-${{ needs.version.outputs.VERSION }}
           path: |
             out/Darktec_*_*s_*.uf2
             out/Darktec_*_*s_*.zip
 
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.VERSION }}
+      TAG: ${{ needs.version.outputs.TAG }}
+    steps:
+      - name: Download role artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: darktec-build-*-${{ needs.version.outputs.VERSION }}
+          path: out
+          merge-multiple: true
+
+      - name: Download changelog
+        uses: actions/download-artifact@v7
+        with:
+          name: darktec-meta-${{ needs.version.outputs.VERSION }}
+          path: /tmp/darktec-meta
+
       - name: Package zip of flasher UF2s
         run: |
+          set -euo pipefail
+          ls -la out/
+          uf2_count="$(find out -maxdepth 1 -type f -name 'Darktec_*_*s_*.uf2' | wc -l | tr -d ' ')"
+          echo "Merged flasher UF2 count: ${uf2_count} (expected 64)"
+          if [ "${uf2_count}" -lt 64 ]; then
+            echo "ERROR: expected 64 flasher UF2s after merge, got ${uf2_count}"
+            exit 1
+          fi
+          cp -f /tmp/darktec-meta/darktec-changelog.md /tmp/darktec-changelog.md
           cd out
           zip -9 "Darktec_uf2_${VERSION}.zip" Darktec_*_*s_*.uf2
           cp -f "Darktec_uf2_${VERSION}.zip" Darktec_uf2_latest.zip
