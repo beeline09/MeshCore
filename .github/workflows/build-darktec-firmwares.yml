@@ -1,7 +1,7 @@
 name: Build Darktec Firmwares
 
-# Push to south_edition (or southedition-origin) → build UF2 matrix → GitHub Release
-# → notify beeline09.github.io to refresh releases.json (optional PAT).
+# Push to south_edition → versioned Darktec release (v{BASE}bN) + darktec-latest
+# BASE from MyMesh.h (Rogovogor major); N increments each push.
 
 permissions:
   contents: write
@@ -19,11 +19,17 @@ on:
       - "lib/**"
       - "examples/companion_radio/**"
       - "examples/simple_repeater/**"
+      - "examples/simple_room_server/**"
+      - "examples/simple_secure_chat/**"
+      - "examples/simple_sensor/**"
+      - "examples/kiss_modem/**"
       - "platformio.ini"
       - "boards/**"
       - "bin/**"
       - "build.sh"
       - "scripts/build-darktec-matrix.sh"
+      - "scripts/darktec-version.sh"
+      - "scripts/darktec-changelog.sh"
       - ".github/workflows/build-darktec-firmwares.yml"
       - ".github/actions/setup-build-environment/**"
 
@@ -37,52 +43,64 @@ jobs:
     steps:
       - name: Clone Repo
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Build Environment
         uses: ./.github/actions/setup-build-environment
 
+      - name: Compute Darktec version
+        env:
+          FIRMWARE_REPO: beeline09/MeshCore
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: /usr/bin/env bash scripts/darktec-version.sh
+
+      - name: Build changelog
+        run: /usr/bin/env bash scripts/darktec-changelog.sh /tmp/darktec-changelog.md
+
       - name: Build Darktec matrix
         env:
-          # Do not set DISABLE_DEBUG=1: build.sh -UCFG_DEBUG breaks Adafruit nRF52 rtos.cpp.
-          FIRMWARE_VERSION: darktec-${{ github.run_number }}
+          FIRMWARE_VERSION: ${{ env.VERSION }}
         run: /usr/bin/env bash scripts/build-darktec-matrix.sh
 
       - name: Upload Workflow Artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: darktec-firmwares
+          name: darktec-firmwares-${{ env.VERSION }}
           path: |
-            out/Darktec_*.uf2
-            out/Darktec_*.zip
+            out/Darktec_*_*s.uf2
+            out/Darktec_*_*s.zip
 
       - name: Package zip of flasher UF2s
         run: |
           cd out
-          zip -9 Darktec_uf2_latest.zip \
-            Darktec_companion_radio_ble_*s.uf2 \
-            Darktec_repeater_*s.uf2
-          echo "Zip contents:"
+          zip -9 "Darktec_uf2_${VERSION}.zip" Darktec_*_*s.uf2
+          cp -f "Darktec_uf2_${VERSION}.zip" Darktec_uf2_latest.zip
           unzip -l Darktec_uf2_latest.zip
 
-      - name: Publish / update darktec-latest Release
+      - name: Publish versioned release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Darktec ${{ env.VERSION }}
+          body_path: /tmp/darktec-changelog.md
+          make_latest: false
+          fail_on_unmatched_files: true
+          files: |
+            out/Darktec_*_*s.uf2
+            out/Darktec_uf2_${{ env.VERSION }}.zip
+
+      - name: Update darktec-latest pointer
         uses: softprops/action-gh-release@v3
         with:
           tag_name: darktec-latest
-          name: Darktec Firmware (latest)
-          body: |
-            Автосборка Darktec с ветки `${{ github.ref_name }}`.
-
-            - Commit: ${{ github.sha }}
-            - Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-            - Flasher: https://beeline09.github.io/darktec/
-
-            Файлы `Darktec_*_{liion|lifepo4|lto}_{1|2}s.uf2` — для drag-and-drop DFU.
+          name: Darktec Firmware (latest → ${{ env.VERSION }})
+          body_path: /tmp/darktec-changelog.md
           make_latest: true
           overwrite_files: true
           fail_on_unmatched_files: true
           files: |
-            out/Darktec_companion_radio_ble_*s.uf2
-            out/Darktec_repeater_*s.uf2
+            out/Darktec_*_*s.uf2
             out/Darktec_uf2_latest.zip
 
       - name: Notify Pages site to sync manifest
@@ -91,7 +109,7 @@ jobs:
           GH_TOKEN: ${{ secrets.PAGES_DISPATCH_TOKEN }}
         run: |
           if [ -z "${GH_TOKEN}" ]; then
-            echo "PAGES_DISPATCH_TOKEN not set — site syncs on schedule / GitHub API fallback"
+            echo "PAGES_DISPATCH_TOKEN not set — site uses GitHub API live"
             exit 0
           fi
           gh api \
@@ -99,5 +117,6 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             /repos/beeline09/beeline09.github.io/dispatches \
             -f event_type='meshcore-release' \
-            -f client_payload[tag]='darktec-latest' \
+            -f client_payload[tag]='${{ env.TAG }}' \
+            -f client_payload[version]='${{ env.VERSION }}' \
             -f client_payload[sha]='${{ github.sha }}'
