@@ -1,4 +1,4 @@
-# Darktec — химия батареи и ADC sleep/wake
+# Darktec — химия батареи и режим защиты питания
 
 Форк аппаратного профиля ProMicro nRF52840 (`variants/darktec`) с выбором
 химии батареи. Основной `src/helpers/NRF52Board.cpp` **не изменяется**.
@@ -9,13 +9,29 @@
 
 `ADC_MULTIPLIER = 1.750f` в `DarktecBoard.h` — калибровка по мультиметру.
 
-## Hard cutoff без LPCOMP / SYSTEMOFF
-
 Зарядка батареи — **своим зарядником на плате**, не через USB fakeTec/ProMicro.
-USB VBUS MCU к штатной зарядке не относится.
+USB VBUS MCU к штатной зарядке не относится (только запасной wake в режиме ADC).
 
-На этой плате `SYSTEMOFF` + LPCOMP wake после разряда ненадёжен при подъёме
-VBAT (boost/DCDC). Darktec использует цикл в `DarktecAdcPower.h`:
+## Режим защиты: `DARKTEC_BATT_PROTECT`
+
+В `variants/darktec/platformio.ini` (секция `[Darktec]`):
+
+```ini
+; Без hard cutoff (только шкала % по химии)
+-D DARKTEC_BATT_PROTECT=DARKTEC_BATT_PROTECT_OFF
+
+; Sleep/wake по АЦП (по умолчанию)
+-D DARKTEC_BATT_PROTECT=DARKTEC_BATT_PROTECT_ADC
+```
+
+| Режим | Поведение |
+|-------|-----------|
+| `DARKTEC_BATT_PROTECT_OFF` | Нет boot-lock / ADC wait / companion auto-shutdown. `powerOff()` → классический `SYSTEMOFF`. Химия только для % на UI. |
+| `DARKTEC_BATT_PROTECT_ADC` | Hard cutoff без LPCOMP: радио off → sleep → опрос АЦП → при `VBAT ≥ wake` (внешний зарядник) или USB MCU → reset. |
+
+LPCOMP на Darktec **не используется** в обоих режимах (`PWRMGT_LPCOMP_*=0`): связка SYSTEMOFF+LPCOMP на boost не поднимает плату от VBAT.
+
+### Режим ADC — цикл (`DarktecAdcPower.h`)
 
 1. Радио off (`SX126X_POWER_EN = LOW`)
 2. Sleep ~1 с, замер АЦП
@@ -29,9 +45,7 @@ VBAT (boost/DCDC). Darktec использует цикл в `DarktecAdcPower.h`:
 - `initiateShutdown(LOW_VOLTAGE|BOOT_PROTECT)`
 - `powerOff()` (в т.ч. companion `AUTO_SHUTDOWN_MILLIVOLTS`)
 
-LPCOMP отключён (`PWRMGT_LPCOMP_*=0`).
-
-## Конфигурация
+## Химия батареи
 
 ```ini
 -D BATTERY_CHEMISTRY=BATTERY_CHEM_LIION
@@ -45,6 +59,9 @@ LPCOMP отключён (`PWRMGT_LPCOMP_*=0`).
 | LiFePO4 1S | 2500 | 2700 | 3100 | 3650 |
 | LTO 1S | 1800 | 2000 | 2200 | 2500 |
 | LTO 2S | ×2 | ×2 | ×2 | ×2 |
+
+Пороги bootlock/wake/critical применяются только при `DARKTEC_BATT_PROTECT_ADC`.
+`BATT_MIN/MAX` (шкала %) — всегда.
 
 ## Окружения сборки
 

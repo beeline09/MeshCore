@@ -78,6 +78,7 @@ public:
       return 0;
   }
 
-  // Не sd_power_system_off(): иначе нет пробуждения по VBAT.
+  // Не sd_power_system_off() в режиме ADC: иначе нет пробуждения по VBAT.
+  // В режиме OFF — классический SYSTEMOFF (см. DarktecBoard.cpp).
   void powerOff() override;
 };

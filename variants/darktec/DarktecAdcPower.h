@@ -1,13 +1,14 @@
 #pragma once
 
 /*
- * Darktec: hard cutoff / recovery по АЦП без SYSTEMOFF+LPCOMP.
+ * Darktec: hard cutoff / recovery по АЦП (режим DARKTEC_BATT_PROTECT_ADC).
  *
  * Зарядка пакета — своим зарядником на плате, НЕ через USB fakeTec/ProMicro.
  * Основной путь пробуждения: подъём VBAT выше PWRMGT_VOLTAGE_WAKE (АЦП).
- * USB VBUS — только запасной путь (отладка / если воткнули кабель в MCU).
+ * USB VBUS — только запасной путь (отладка / кабель в MCU).
  *
  * Цикл: радио OFF → sleep → опрос АЦП → wake или USB → NVIC_SystemReset().
+ * При DARKTEC_BATT_PROTECT_OFF этот путь не вызывается.
  */
 
 #include <Arduino.h>

@@ -12,22 +12,27 @@ const PowerMgtConfig power_config = {
 };
 
 void DarktecBoard::initiateShutdown(uint8_t reason) {
-  // LOW_VOLTAGE / BOOT_PROTECT: ADC sleep/wake, без SYSTEMOFF+LPCOMP.
+#if DARKTEC_BATT_PROTECT == DARKTEC_BATT_PROTECT_ADC
   if (reason == SHUTDOWN_REASON_LOW_VOLTAGE ||
       reason == SHUTDOWN_REASON_BOOT_PROTECT) {
     darktec::waitForBatteryRecovery(*this, SX126X_POWER_EN);
     return;  // недостижимо
   }
+#endif
 
-  // Прочие причины (USER и т.п.) — прежнее поведение.
   digitalWrite(SX126X_POWER_EN, LOW);
   enterSystemOff(reason);
 }
 #endif
 
 void DarktecBoard::powerOff() {
-  // Companion AUTO_SHUTDOWN и ручной powerOff → тот же ADC recovery-цикл.
+#if DARKTEC_BATT_PROTECT == DARKTEC_BATT_PROTECT_ADC
+  // Companion AUTO_SHUTDOWN / ручной powerOff → ADC recovery-цикл.
   darktec::waitForBatteryRecovery(*this, SX126X_POWER_EN);
+#else
+  // Защита выключена: классический SYSTEMOFF (как stock ProMicro).
+  sd_power_system_off();
+#endif
 }
 
 void DarktecBoard::begin() {
@@ -48,10 +53,12 @@ void DarktecBoard::begin() {
 
     pinMode(SX126X_POWER_EN, OUTPUT);
 #ifdef NRF52_POWER_MANAGEMENT
-    // Boot-lock по АЦП (химия): не SYSTEMOFF, а ожидание подъёма VBAT / USB.
+#if DARKTEC_BATT_PROTECT == DARKTEC_BATT_PROTECT_ADC
+    // Boot-lock по АЦП (химия): ожидание подъёма VBAT / запасной USB MCU.
     if (darktec::batteryBelowThreshold(*this, PWRMGT_VOLTAGE_BOOTLOCK)) {
       darktec::waitForBatteryRecovery(*this, SX126X_POWER_EN);
     }
+#endif
     // LPCOMP runtime alert не включаем (lpcomp_low_refsel=0).
     (void)power_config;
 #endif

@@ -1,25 +1,29 @@
 #pragma once
 
 /*
- * Химия батареи Darktec → шкала % UI и пороги ADC sleep/wake.
+ * Химия батареи Darktec → шкала % UI и (опционально) пороги защиты.
  *
  * Аппаратный лимит: напряжение пакета ≤ 5 В.
  *   Li-ion / LiFePO4 : только 1S
  *   LTO              : 1S или 2S (2S full = 5000 мВ)
  *
- * Выбор в platformio.ini, например:
+ * Режим защиты (platformio.ini):
+ *   -D DARKTEC_BATT_PROTECT=DARKTEC_BATT_PROTECT_OFF  — без hard cutoff
+ *   -D DARKTEC_BATT_PROTECT=DARKTEC_BATT_PROTECT_ADC  — sleep/wake по АЦП
+ *     (см. DarktecAdcPower.h; LPCOMP/SYSTEMOFF не используем)
+ *
+ * Пример:
  *   -D BATTERY_CHEMISTRY=BATTERY_CHEM_LIFEPO4
  *   -D BATTERY_CELLS=1
- *
- * Hard cutoff: НЕ через SYSTEMOFF+LPCOMP (на boost/DCDC не просыпается
- * от VBAT, только USB). Вместо этого — цикл sleep + опрос АЦП
- * (см. DarktecAdcPower.h) с порогами critical / bootlock / wake ниже.
- * LPCOMP отключён (REFSEL=0).
+ *   -D DARKTEC_BATT_PROTECT=DARKTEC_BATT_PROTECT_ADC
  */
 
 #define BATTERY_CHEM_LIION    1
 #define BATTERY_CHEM_LIFEPO4  2
 #define BATTERY_CHEM_LTO      3
+
+#define DARKTEC_BATT_PROTECT_OFF  0
+#define DARKTEC_BATT_PROTECT_ADC  1
 
 #ifndef BATTERY_CHEMISTRY
 #define BATTERY_CHEMISTRY  BATTERY_CHEM_LIION
@@ -29,10 +33,19 @@
 #define BATTERY_CELLS  1
 #endif
 
+#ifndef DARKTEC_BATT_PROTECT
+#define DARKTEC_BATT_PROTECT  DARKTEC_BATT_PROTECT_ADC
+#endif
+
 #if BATTERY_CHEMISTRY != BATTERY_CHEM_LIION && \
     BATTERY_CHEMISTRY != BATTERY_CHEM_LIFEPO4 && \
     BATTERY_CHEMISTRY != BATTERY_CHEM_LTO
 #error "BATTERY_CHEMISTRY должен быть BATTERY_CHEM_LIION, BATTERY_CHEM_LIFEPO4 или BATTERY_CHEM_LTO"
+#endif
+
+#if DARKTEC_BATT_PROTECT != DARKTEC_BATT_PROTECT_OFF && \
+    DARKTEC_BATT_PROTECT != DARKTEC_BATT_PROTECT_ADC
+#error "DARKTEC_BATT_PROTECT должен быть DARKTEC_BATT_PROTECT_OFF или DARKTEC_BATT_PROTECT_ADC"
 #endif
 
 #if BATTERY_CELLS < 1
@@ -86,24 +99,37 @@
 #define BATT_MAX_MILLIVOLTS  BATT_PACK_FULL_MV
 #endif
 
-/* Для совместимости с PowerMgtConfig: boot-lock через ADC-цикл Darktec, не SYSTEMOFF. */
+#if DARKTEC_BATT_PROTECT == DARKTEC_BATT_PROTECT_ADC
+
 #ifndef PWRMGT_VOLTAGE_BOOTLOCK
 #define PWRMGT_VOLTAGE_BOOTLOCK  BATT_PACK_BOOTLOCK_MV
 #endif
-
 #ifndef PWRMGT_VOLTAGE_CRITICAL
 #define PWRMGT_VOLTAGE_CRITICAL  BATT_PACK_CRITICAL_MV
 #endif
-
 #ifndef PWRMGT_VOLTAGE_WAKE
 #define PWRMGT_VOLTAGE_WAKE  BATT_PACK_WAKE_MV
 #endif
-
 #ifndef AUTO_SHUTDOWN_MILLIVOLTS
 #define AUTO_SHUTDOWN_MILLIVOLTS  BATT_PACK_CRITICAL_MV
 #endif
 
-/* LPCOMP не используем на Darktec (brick при recovery). */
+#else  /* DARKTEC_BATT_PROTECT_OFF — без hard cutoff */
+
+#ifndef PWRMGT_VOLTAGE_BOOTLOCK
+#define PWRMGT_VOLTAGE_BOOTLOCK  0
+#endif
+#ifndef PWRMGT_VOLTAGE_CRITICAL
+#define PWRMGT_VOLTAGE_CRITICAL  BATT_PACK_CRITICAL_MV
+#endif
+#ifndef PWRMGT_VOLTAGE_WAKE
+#define PWRMGT_VOLTAGE_WAKE  BATT_PACK_WAKE_MV
+#endif
+/* AUTO_SHUTDOWN_MILLIVOLTS не задаём — companion не уходит в auto powerOff */
+
+#endif
+
+/* LPCOMP на Darktec не используем (brick при recovery с boost). */
 #ifndef PWRMGT_LPCOMP_LOW_REFSEL
 #define PWRMGT_LPCOMP_LOW_REFSEL  0
 #endif
