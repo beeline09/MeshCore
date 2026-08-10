@@ -41,7 +41,8 @@ build_one() {
   echo "=== Building ${out_name} (${pio_env}, ${chem_macro}, cells=${cells}) ==="
 
   # -U then -D so matrix overrides win over variants/darktec/platformio.ini defaults.
-  export PLATFORMIO_BUILD_FLAGS="-UBATTERY_CHEMISTRY -UBATTERY_CELLS -DBATTERY_CHEMISTRY=${chem_macro} -DBATTERY_CELLS=${cells}"
+  # Keep CFG_DEBUG defined (nRF52 core needs it); quiet MeshCore debug macros for release builds.
+  export PLATFORMIO_BUILD_FLAGS="-UBATTERY_CHEMISTRY -UBATTERY_CELLS -DBATTERY_CHEMISTRY=${chem_macro} -DBATTERY_CELLS=${cells} -UMESH_DEBUG -UBLE_DEBUG_LOGGING -DCFG_DEBUG=0"
 
   # Reuse project build.sh packaging (versioned name + uf2conv).
   /usr/bin/env bash build.sh build-firmware "${pio_env}"

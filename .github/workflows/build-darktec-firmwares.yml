@@ -43,8 +43,8 @@ jobs:
 
       - name: Build Darktec matrix
         env:
+          # Do not set DISABLE_DEBUG=1: build.sh -UCFG_DEBUG breaks Adafruit nRF52 rtos.cpp.
           FIRMWARE_VERSION: darktec-${{ github.run_number }}
-          DISABLE_DEBUG: "1"
         run: /usr/bin/env bash scripts/build-darktec-matrix.sh
 
       - name: Upload Workflow Artifacts
