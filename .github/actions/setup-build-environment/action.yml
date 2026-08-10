@@ -3,13 +3,17 @@ runs:
   using: "composite"
   steps:
 
-    - name: Init Cache
+    # Restore before pip/PlatformIO so toolchains + packages + pip wheels hit cache.
+    - name: Cache pip and PlatformIO
       uses: actions/cache@v5
       with:
         path: |
           ~/.cache/pip
-          ~/.platformio/.cache
-        key: ${{ runner.os }}-pio
+          ~/.platformio
+        key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini', 'variants/**/platformio.ini') }}
+        restore-keys: |
+          ${{ runner.os }}-pio-
+          ${{ runner.os }}-pio
 
     - name: Install Python
       uses: actions/setup-python@v6

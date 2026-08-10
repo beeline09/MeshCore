@@ -66,3 +66,8 @@ LPCOMP на Darktec **не используется** в обоих режима
 ## Окружения сборки
 
 `Darktec_repeater`, `Darktec_companion_radio_ble`, и остальные аналоги ProMicro.
+
+CI (`scripts/build-darktec-matrix.sh`) собирает обе защиты для каждого
+роль×химия×ячейки варианта:
+
+`Darktec_{role}_{chem}_{cells}s_{adc|off}.{uf2,zip}`

@@ -68,13 +68,13 @@ jobs:
         with:
           name: darktec-firmwares-${{ env.VERSION }}
           path: |
-            out/Darktec_*_*s.uf2
-            out/Darktec_*_*s.zip
+            out/Darktec_*_*s_*.uf2
+            out/Darktec_*_*s_*.zip
 
       - name: Package zip of flasher UF2s
         run: |
           cd out
-          zip -9 "Darktec_uf2_${VERSION}.zip" Darktec_*_*s.uf2
+          zip -9 "Darktec_uf2_${VERSION}.zip" Darktec_*_*s_*.uf2
           cp -f "Darktec_uf2_${VERSION}.zip" Darktec_uf2_latest.zip
           unzip -l Darktec_uf2_latest.zip
 
@@ -87,8 +87,8 @@ jobs:
           make_latest: false
           fail_on_unmatched_files: true
           files: |
-            out/Darktec_*_*s.uf2
-            out/Darktec_*_*s.zip
+            out/Darktec_*_*s_*.uf2
+            out/Darktec_*_*s_*.zip
             out/Darktec_uf2_${{ env.VERSION }}.zip
 
       - name: Update darktec-latest pointer
@@ -101,8 +101,8 @@ jobs:
           overwrite_files: true
           fail_on_unmatched_files: true
           files: |
-            out/Darktec_*_*s.uf2
-            out/Darktec_*_*s.zip
+            out/Darktec_*_*s_*.uf2
+            out/Darktec_*_*s_*.zip
             out/Darktec_uf2_latest.zip
 
       - name: Notify Pages site to sync manifest

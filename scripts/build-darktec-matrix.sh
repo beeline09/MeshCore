@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build all Darktec roles × battery chemistry into out/.
-# Filenames: Darktec_{role}_{chem}_{cells}s.uf2
+# Build all Darktec roles × battery chemistry × battery protect into out/.
+# Filenames: Darktec_{role}_{chem}_{cells}s_{adc|off}.{uf2,zip}
 #
 # NOTE: do NOT call build.sh per variant — it runs `rm -rf out` on every invoke.
 set -euo pipefail
@@ -26,6 +26,12 @@ VARIANTS=(
   "BATTERY_CHEM_LTO lto 2"
 )
 
+# macro slug
+PROTECTS=(
+  "DARKTEC_BATT_PROTECT_ADC adc"
+  "DARKTEC_BATT_PROTECT_OFF off"
+)
+
 # pio_env role_slug
 ROLES=(
   "Darktec_companion_radio_ble companion_radio_ble"
@@ -38,7 +44,7 @@ ROLES=(
   "Darktec_kiss_modem kiss_modem"
 )
 
-EXPECTED=$(( ${#ROLES[@]} * ${#VARIANTS[@]} ))
+EXPECTED=$(( ${#ROLES[@]} * ${#VARIANTS[@]} * ${#PROTECTS[@]} ))
 
 build_one() {
   local pio_env="$1"
@@ -46,12 +52,15 @@ build_one() {
   local chem_macro="$3"
   local chem_slug="$4"
   local cells="$5"
-  local out_name="Darktec_${role_slug}_${chem_slug}_${cells}s.uf2"
-  local versioned_name="${pio_env}-${FIRMWARE_VERSION_STRING}.uf2"
+  local protect_macro="$6"
+  local protect_slug="$7"
+  local out_base="Darktec_${role_slug}_${chem_slug}_${cells}s_${protect_slug}"
+  local out_name="${out_base}.uf2"
+  local versioned_name="${pio_env}-${FIRMWARE_VERSION_STRING}-${protect_slug}.uf2"
 
-  echo "=== Building ${out_name} (${pio_env}, ${chem_macro}, cells=${cells}) ==="
+  echo "=== Building ${out_name} (${pio_env}, ${chem_macro}, cells=${cells}, protect=${protect_macro}) ==="
 
-  export PLATFORMIO_BUILD_FLAGS="-UBATTERY_CHEMISTRY -UBATTERY_CELLS -DBATTERY_CHEMISTRY=${chem_macro} -DBATTERY_CELLS=${cells} -UMESH_DEBUG -UBLE_DEBUG_LOGGING -DCFG_DEBUG=0 -DFIRMWARE_VERSION='\"${FIRMWARE_VERSION_STRING}\"'"
+  export PLATFORMIO_BUILD_FLAGS="-UBATTERY_CHEMISTRY -UBATTERY_CELLS -UDARKTEC_BATT_PROTECT -DBATTERY_CHEMISTRY=${chem_macro} -DBATTERY_CELLS=${cells} -DDARKTEC_BATT_PROTECT=${protect_macro} -UMESH_DEBUG -UBLE_DEBUG_LOGGING -DCFG_DEBUG=0 -DFIRMWARE_VERSION='\"${FIRMWARE_VERSION_STRING}\"'"
 
   pio run -e "${pio_env}"
 
@@ -67,7 +76,7 @@ build_one() {
     echo "ERROR: missing OTA firmware.zip for ${pio_env} (needed for Serial DFU)"
     exit 1
   fi
-  cp -f ".pio/build/${pio_env}/firmware.zip" "out/Darktec_${role_slug}_${chem_slug}_${cells}s.zip"
+  cp -f ".pio/build/${pio_env}/firmware.zip" "out/${out_base}.zip"
   echo "Wrote out/${out_name}"
 }
 
@@ -75,20 +84,25 @@ for role in "${ROLES[@]}"; do
   read -r pio_env role_slug <<<"$role"
   for variant in "${VARIANTS[@]}"; do
     read -r chem_macro chem_slug cells <<<"$variant"
-    build_one "$pio_env" "$role_slug" "$chem_macro" "$chem_slug" "$cells"
+    for protect in "${PROTECTS[@]}"; do
+      read -r protect_macro protect_slug <<<"$protect"
+      build_one "$pio_env" "$role_slug" "$chem_macro" "$chem_slug" "$cells" "$protect_macro" "$protect_slug"
+    done
   done
 done
 
 echo "=== Darktec matrix done ==="
-ls -la out/Darktec_*_*s.uf2
+ls -la out/Darktec_*_*s_*.uf2
 
-flasher_count="$(find out -maxdepth 1 -type f -name 'Darktec_*_*s.uf2' ! -name '*-v*.uf2' | wc -l | tr -d ' ')"
-# More reliable: count exact pattern with chem slugs
 flasher_count="$(find out -maxdepth 1 -type f \( \
-  -name 'Darktec_*_liion_1s.uf2' -o \
-  -name 'Darktec_*_lifepo4_1s.uf2' -o \
-  -name 'Darktec_*_lto_1s.uf2' -o \
-  -name 'Darktec_*_lto_2s.uf2' \
+  -name 'Darktec_*_liion_1s_adc.uf2' -o \
+  -name 'Darktec_*_liion_1s_off.uf2' -o \
+  -name 'Darktec_*_lifepo4_1s_adc.uf2' -o \
+  -name 'Darktec_*_lifepo4_1s_off.uf2' -o \
+  -name 'Darktec_*_lto_1s_adc.uf2' -o \
+  -name 'Darktec_*_lto_1s_off.uf2' -o \
+  -name 'Darktec_*_lto_2s_adc.uf2' -o \
+  -name 'Darktec_*_lto_2s_off.uf2' \
 \) | wc -l | tr -d ' ')"
 
 echo "Flasher UF2 count: ${flasher_count} (expected ${EXPECTED})"
