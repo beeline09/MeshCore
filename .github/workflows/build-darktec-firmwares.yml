@@ -1,0 +1,100 @@
+name: Build Darktec Firmwares
+
+# Push to south_edition (or southedition-origin) → build UF2 matrix → GitHub Release
+# → notify beeline09.github.io to refresh releases.json (optional PAT).
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - south_edition
+      - southedition-origin
+    paths:
+      - "variants/darktec/**"
+      - "src/**"
+      - "include/**"
+      - "lib/**"
+      - "examples/companion_radio/**"
+      - "examples/simple_repeater/**"
+      - "platformio.ini"
+      - "boards/**"
+      - "bin/**"
+      - "build.sh"
+      - "scripts/build-darktec-matrix.sh"
+      - ".github/workflows/build-darktec-firmwares.yml"
+      - ".github/actions/setup-build-environment/**"
+
+concurrency:
+  group: darktec-firmware-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone Repo
+        uses: actions/checkout@v6
+
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-environment
+
+      - name: Build Darktec matrix
+        env:
+          FIRMWARE_VERSION: darktec-${{ github.run_number }}
+          DISABLE_DEBUG: "1"
+        run: /usr/bin/env bash scripts/build-darktec-matrix.sh
+
+      - name: Upload Workflow Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: darktec-firmwares
+          path: |
+            out/Darktec_*.uf2
+            out/Darktec_*.zip
+
+      - name: Package zip of flasher UF2s
+        run: |
+          cd out
+          zip -9 Darktec_uf2_latest.zip \
+            Darktec_companion_radio_ble_*.uf2 \
+            Darktec_repeater_*.uf2
+
+      - name: Publish / update darktec-latest Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: darktec-latest
+          name: Darktec Firmware (latest)
+          body: |
+            Автосборка Darktec с ветки `${{ github.ref_name }}`.
+
+            - Commit: ${{ github.sha }}
+            - Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            - Flasher: https://beeline09.github.io/darktec/
+
+            Файлы `Darktec_*_{liion|lifepo4|lto}_{1|2}s.uf2` — для drag-and-drop DFU.
+          make_latest: true
+          overwrite_files: true
+          files: |
+            out/Darktec_companion_radio_ble_*.uf2
+            out/Darktec_repeater_*.uf2
+            out/Darktec_uf2_latest.zip
+
+      - name: Notify Pages site to sync manifest
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.PAGES_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "PAGES_DISPATCH_TOKEN not set — site syncs on schedule / GitHub API fallback"
+            exit 0
+          fi
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            /repos/beeline09/beeline09.github.io/dispatches \
+            -f event_type='meshcore-release' \
+            -f client_payload[tag]='darktec-latest' \
+            -f client_payload[sha]='${{ github.sha }}'
