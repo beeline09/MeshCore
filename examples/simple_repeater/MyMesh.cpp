@@ -1112,6 +1112,9 @@ void MyMesh::updateAdvertTimer() {
 }
 
 void MyMesh::updateFloodAdvertTimer() {
+  // Repeater-specific hardcoded flood interval: every 10 minutes.
+  // next_flood_advert = futureMillis(10UL * 60UL * 1000UL);
+
   if (_prefs.flood_advert_interval > 0) { // schedule flood advert timer
     next_flood_advert = futureMillis(((uint32_t)_prefs.flood_advert_interval) * 60 * 60 * 1000);
   } else {
