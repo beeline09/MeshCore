@@ -8,10 +8,13 @@
  *   LTO              : 1S или 2S (2S full = 5000 мВ)
  *
  * Режим защиты (platformio.ini):
- *   -D DARKTEC_BATT_PROTECT=DARKTEC_BATT_PROTECT_OFF  — без hard cutoff
- *   -D DARKTEC_BATT_PROTECT=DARKTEC_BATT_PROTECT_ADC  — sleep/wake по АЦП
+ *   -D DARKTEC_BATT_PROTECT=DARKTEC_BATT_PROTECT_OFF  — без auto hard cutoff
+ *   -D DARKTEC_BATT_PROTECT=DARKTEC_BATT_PROTECT_ADC  — bootlock + AUTO_SHUTDOWN + ADC wait
  *     (см. DarktecAdcPower.h; LPCOMP/SYSTEMOFF не используем)
  *
+ * powerOff() в обоих режимах идёт в ADC-wait: SYSTEMOFF на Darktec не
+ * поднимается от VBAT зарядника на плате.
+
  * Пример:
  *   -D BATTERY_CHEMISTRY=BATTERY_CHEM_LIFEPO4
  *   -D BATTERY_CELLS=1

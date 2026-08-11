@@ -26,13 +26,10 @@ void DarktecBoard::initiateShutdown(uint8_t reason) {
 #endif
 
 void DarktecBoard::powerOff() {
-#if DARKTEC_BATT_PROTECT == DARKTEC_BATT_PROTECT_ADC
-  // Companion AUTO_SHUTDOWN / ручной powerOff → ADC recovery-цикл.
+  // SYSTEMOFF на Darktec не поднимается от VBAT через buck-boost.
+  // Даже в режиме OFF ручной/CLI powerOff идёт в ADC-wait по делителю
+  // батареи. Авто-cutoff при OFF отключён отдельно (нет AUTO_SHUTDOWN / bootlock).
   darktec::waitForBatteryRecovery(*this, SX126X_POWER_EN);
-#else
-  // Защита выключена: классический SYSTEMOFF (как stock ProMicro).
-  sd_power_system_off();
-#endif
 }
 
 void DarktecBoard::begin() {
@@ -54,7 +51,7 @@ void DarktecBoard::begin() {
     pinMode(SX126X_POWER_EN, OUTPUT);
 #ifdef NRF52_POWER_MANAGEMENT
 #if DARKTEC_BATT_PROTECT == DARKTEC_BATT_PROTECT_ADC
-    // Boot-lock по АЦП (химия): ожидание подъёма VBAT / запасной USB MCU.
+    // Boot-lock по АЦП пакета (химия): ждём подъёма VBAT на делителе.
     if (darktec::batteryBelowThreshold(*this, PWRMGT_VOLTAGE_BOOTLOCK)) {
       darktec::waitForBatteryRecovery(*this, SX126X_POWER_EN);
     }

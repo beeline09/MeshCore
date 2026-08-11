@@ -3,7 +3,6 @@
 #include <MeshCore.h>
 #include <Arduino.h>
 #include <helpers/NRF52Board.h>
-#include "DarktecAdcPower.h"
 
 #define P_LORA_NSS 13 //P1.13 45
 #define P_LORA_DIO_1 11 //P0.10 10
@@ -21,6 +20,8 @@
 #define  PIN_VBAT_READ 17
 // Делитель батареи: 100к / 100к (коэффициент 2.0). Калибровка по мультиметру.
 #define  ADC_MULTIPLIER   (1.750f)
+
+#include "DarktecAdcPower.h"
 
 class DarktecBoard : public NRF52BoardDCDC {
 protected:
@@ -78,7 +79,7 @@ public:
       return 0;
   }
 
-  // Не sd_power_system_off() в режиме ADC: иначе нет пробуждения по VBAT.
-  // В режиме OFF — классический SYSTEMOFF (см. DarktecBoard.cpp).
+  // Не sd_power_system_off(): на Darktec нет пробуждения по VBAT из SYSTEMOFF.
+  // Оба режима защиты: ADC sleep/wake (см. DarktecBoard.cpp / DarktecAdcPower.h).
   void powerOff() override;
 };

@@ -27,6 +27,9 @@
 // См. battery_chemistry.h (BATTERY_CHEMISTRY, BATTERY_CELLS). Пакет ≤ 5 В.
 #include "battery_chemistry.h"
 
+// Радио по умолчанию: 869.075 / 62.5 / SF8 / CR8 / 22 дБм.
+#include "radio_defaults.h"
+
 // D17 → P0.31 → AIN7 для измерений LPCOMP.
 #define PWRMGT_LPCOMP_AIN        7
 
