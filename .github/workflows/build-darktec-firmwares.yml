@@ -19,7 +19,6 @@ on:
   push:
     branches:
       - south_edition
-      - southedition-origin
     paths:
       - "variants/darktec/**"
       - "src/**"

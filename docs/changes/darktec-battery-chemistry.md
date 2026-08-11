@@ -90,7 +90,7 @@ LPCOMP на Darktec **не используется** (`PWRMGT_LPCOMP_*=0`): SYS
 `Darktec_repeater`, `Darktec_companion_radio_ble`, и остальные аналоги ProMicro.
 
 CI (`.github/workflows/build-darktec-firmwares.yml` + `scripts/build-darktec-matrix.sh`)
-на push в `south_edition` / `southedition-origin` собирает обе защиты для каждого
+на push в `south_edition` собирает обе защиты для каждого
 роль×химия×ячейки варианта и публикует релиз:
 
 `Darktec_{role}_{chem}_{cells}s_{adc|off}.{uf2,zip}`
