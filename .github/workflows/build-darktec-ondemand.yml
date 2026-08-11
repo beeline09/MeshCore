@@ -302,11 +302,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          NOTES="$(cat <<'EOF'
+          **Служебный кэш** для lab-flasher `/darktec_new/` (не «продуктовый» релиз).
+
+          Один тег — все кастомные UF2/zip. Старые ассеты чистятся автоматически
+          (старше ~14 дней или сверх лимита). Смотрите обычные релизы `darktec-v*` / `darktec-latest`.
+          EOF
+          )"
           if ! gh release view darktec-ondemand >/dev/null 2>&1; then
             gh release create darktec-ondemand \
-              --title "Darktec on-demand builds (cache)" \
-              --notes "Кэш кастомных сборок (имя ноды и т.п.) для экспериментального flasher /darktec_new/. Ассеты не удаляются автоматически." \
+              --title "Darktec on-demand (cache)" \
+              --notes "$NOTES" \
+              --prerelease \
               --latest=false
+          else
+            gh release edit darktec-ondemand \
+              --title "Darktec on-demand (cache)" \
+              --notes "$NOTES" \
+              --prerelease \
+              --latest=false || true
           fi
 
       - name: Upload assets to darktec-ondemand
@@ -323,6 +337,15 @@ jobs:
           gh release upload darktec-ondemand "${files[@]}" --clobber
           ls -la out/
           for f in "${files[@]}"; do echo "Uploaded $(basename "$f")"; done
+
+      - name: Prune old on-demand assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEEP_DAYS: "14"
+          KEEP_MAX: "80"
+        run: |
+          chmod +x scripts/prune-darktec-ondemand.sh
+          /usr/bin/env bash scripts/prune-darktec-ondemand.sh
 
       - name: Comment on issue
         if: github.event_name == 'issues'
