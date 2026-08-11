@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a single Darktec firmware variant (on-demand / custom advert name).
+# Build a single Darktec firmware variant (on-demand / custom advert name / radio).
 #
 # Required env:
 #   FIRMWARE_VERSION   e.g. v1.16b3
@@ -14,9 +14,14 @@
 # Optional:
 #   ADVERT_NAME        node name string (default depends on role / platformio.ini)
 #   NAME_SLUG          sanitized slug for filename (default: default)
+#   LORA_FREQ          MHz (default 869.075)
+#   LORA_BW            kHz (default 62.5)
+#   LORA_SF            5–12 (default 8)
+#   LORA_CR            5–8 (default 8)
+#   LORA_TX_POWER      dBm (default 22)
 #
 # Output:
-#   out/Darktec_{role}_{chem}_{cells}s_{protect}__{name_slug}__{sha}.{uf2,zip}
+#   out/Darktec_{role}_{chem}_{cells}s_{protect}__{name_slug}__{radio_slug}__{sha}.{uf2,zip}
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -36,7 +41,19 @@ FIRMWARE_VERSION_STRING="${FIRMWARE_VERSION}-${COMMIT_HASH}"
 NAME_SLUG="${NAME_SLUG:-default}"
 NAME_SLUG="$(echo "$NAME_SLUG" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/^$/default/' | cut -c1-24)"
 
-OUT_BASE="Darktec_${DARKTEC_ROLE_SLUG}_${CHEM_SLUG}_${BATTERY_CELLS}s_${PROTECT_SLUG}__${NAME_SLUG}__${COMMIT_HASH}"
+LORA_FREQ="${LORA_FREQ:-869.075}"
+LORA_BW="${LORA_BW:-62.5}"
+LORA_SF="${LORA_SF:-8}"
+LORA_CR="${LORA_CR:-8}"
+LORA_TX_POWER="${LORA_TX_POWER:-22}"
+
+# Filename-safe radio fingerprint (dots → p)
+radio_token() {
+  printf '%s' "$1" | tr '.' 'p' | tr -cd 'A-Za-z0-9p-'
+}
+RADIO_SLUG="f$(radio_token "$LORA_FREQ")-bw$(radio_token "$LORA_BW")-sf${LORA_SF}-cr${LORA_CR}-tx${LORA_TX_POWER}"
+
+OUT_BASE="Darktec_${DARKTEC_ROLE_SLUG}_${CHEM_SLUG}_${BATTERY_CELLS}s_${PROTECT_SLUG}__${NAME_SLUG}__${RADIO_SLUG}__${COMMIT_HASH}"
 
 rm -rf out
 mkdir -p out
@@ -48,10 +65,13 @@ if [ -n "${ADVERT_NAME:-}" ]; then
   EXTRA_ADVERT=" -UADVERT_NAME -DADVERT_NAME='\"${SAFE_NAME}\"'"
 fi
 
+EXTRA_RADIO=" -DDARKTEC_RADIO_CUSTOM -ULORA_FREQ -DLORA_FREQ=${LORA_FREQ} -ULORA_BW -DLORA_BW=${LORA_BW} -ULORA_SF -DLORA_SF=${LORA_SF} -ULORA_CR -DLORA_CR=${LORA_CR} -ULORA_TX_POWER -DLORA_TX_POWER=${LORA_TX_POWER}"
+
 echo "=== On-demand build ${OUT_BASE} ==="
 echo "env=${DARKTEC_PIO_ENV} chem=${BATTERY_CHEMISTRY} cells=${BATTERY_CELLS} protect=${DARKTEC_BATT_PROTECT} name=${ADVERT_NAME:-<default>}"
+echo "radio freq=${LORA_FREQ} bw=${LORA_BW} sf=${LORA_SF} cr=${LORA_CR} tx=${LORA_TX_POWER}"
 
-export PLATFORMIO_BUILD_FLAGS="-UBATTERY_CHEMISTRY -UBATTERY_CELLS -UDARKTEC_BATT_PROTECT -DBATTERY_CHEMISTRY=${BATTERY_CHEMISTRY} -DBATTERY_CELLS=${BATTERY_CELLS} -DDARKTEC_BATT_PROTECT=${DARKTEC_BATT_PROTECT} -UMESH_DEBUG -UBLE_DEBUG_LOGGING -DCFG_DEBUG=0 -DFIRMWARE_VERSION='\"${FIRMWARE_VERSION_STRING}\"'${EXTRA_ADVERT}"
+export PLATFORMIO_BUILD_FLAGS="-UBATTERY_CHEMISTRY -UBATTERY_CELLS -UDARKTEC_BATT_PROTECT -DBATTERY_CHEMISTRY=${BATTERY_CHEMISTRY} -DBATTERY_CELLS=${BATTERY_CELLS} -DDARKTEC_BATT_PROTECT=${DARKTEC_BATT_PROTECT} -UMESH_DEBUG -UBLE_DEBUG_LOGGING -DCFG_DEBUG=0 -DFIRMWARE_VERSION='\"${FIRMWARE_VERSION_STRING}\"'${EXTRA_ADVERT}${EXTRA_RADIO}"
 
 pio run -e "${DARKTEC_PIO_ENV}"
 

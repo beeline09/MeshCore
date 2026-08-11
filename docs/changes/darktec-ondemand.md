@@ -9,14 +9,15 @@
 
 ## Как работает
 
-1. UI считает slug имени и `sha8` tip `south_edition`.
-2. Ищет ассеты в Release tag **`darktec-ondemand`**.
+1. UI считает slug имени, параметры радио и `sha8` tip `south_edition`.
+2. Ищет ассеты в Release tag **`darktec-ondemand`**
+   (`…__{name}__f{freq}-bw{bw}-sf…-tx…__{sha}.{uf2,zip}`).
 3. При промахе — issue с блоком `<!-- darktec-ondemand ... -->` (метка `darktec-ondemand`).
 4. Workflow `.github/workflows/build-darktec-ondemand.yml` + `scripts/build-darktec-ondemand.sh`:
    - один `pio` env;
-   - `-DADVERT_NAME=...` через `PLATFORMIO_BUILD_FLAGS`;
+   - `-DADVERT_NAME=...` и `-DDARKTEC_RADIO_CUSTOM -DLORA_*=...`;
    - **не** вызывает `darktec-version.sh` (не бампит `bN`);
-   - заливает `Darktec_{role}_{chem}_{Ns}_{protect}__{slug}__{sha}.{uf2,zip}` с `--clobber`.
+   - заливает ассеты с `--clobber`.
 
 Триггеры: `workflow_dispatch`, `repository_dispatch` (`darktec-ondemand`), issues (метка / marker / title `darktec-ondemand:`).
 

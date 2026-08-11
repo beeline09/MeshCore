@@ -5,11 +5,17 @@
  * Только variants/darktec — переопределяет LORA_* из [arduino_base].
  *
  *   freq 869.075 МГц, BW 62.5 кГц, SF 8, CR 8, TX 22 дБм
+ *   (Краснодарский край / Адыгея)
+ *
+ * On-demand / lab: -DDARKTEC_RADIO_CUSTOM + свои -DLORA_* — этот блок
+ * не трогает значения (см. scripts/build-darktec-ondemand.sh).
  *
  * path.hash.mode (2 байта / 32 хопа) здесь не задаётся: это поле prefs
  * в examples/, без правок ядра/приложений — только CLI:
  *   set path.hash.mode 1
  */
+
+#ifndef DARKTEC_RADIO_CUSTOM
 
 #ifdef LORA_FREQ
 #undef LORA_FREQ
@@ -35,3 +41,5 @@
 #undef LORA_TX_POWER
 #endif
 #define LORA_TX_POWER  22
+
+#endif /* !DARKTEC_RADIO_CUSTOM */
