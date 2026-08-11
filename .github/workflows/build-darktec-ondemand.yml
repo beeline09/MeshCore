@@ -183,6 +183,14 @@ jobs:
           advert = data.get("advert_name", "") or ""
           slug = data.get("name_slug", "") or ""
 
+          # Latin-only advert names (A–Z, digits, space, - _ . ')
+          if advert:
+              advert = advert.strip()
+              if not re.fullmatch(r"[A-Za-z0-9 _.'-]{1,31}", advert) or not re.search(r"[A-Za-z]", advert):
+                  raise SystemExit(
+                      f"advert_name must be Latin only (A-Z, digits, space, -_.): {advert!r}"
+                  )
+
           def num(key, default, lo, hi, as_int=False):
               raw = str(data.get(key, default) or default).strip().replace(",", ".")
               try:
