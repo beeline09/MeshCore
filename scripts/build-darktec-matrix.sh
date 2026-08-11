@@ -86,7 +86,11 @@ build_one() {
 
   echo "=== Building ${out_name} (${pio_env}, ${chem_macro}, cells=${cells}, protect=${protect_macro}) ==="
 
-  export PLATFORMIO_BUILD_FLAGS="-UBATTERY_CHEMISTRY -UBATTERY_CELLS -UDARKTEC_BATT_PROTECT -DBATTERY_CHEMISTRY=${chem_macro} -DBATTERY_CELLS=${cells} -DDARKTEC_BATT_PROTECT=${protect_macro} -UMESH_DEBUG -UBLE_DEBUG_LOGGING -DCFG_DEBUG=0 -DFIRMWARE_VERSION='\"${FIRMWARE_VERSION_STRING}\"'"
+  # Do NOT use -UBATTERY… here: PlatformIO moves all -U* to the end of gcc argv,
+  # so -UBATTERY -DBATTERY=… leaves the macro UNDEFINED (chemistry falls back to
+  # #ifndef defaults). Later -D overrides ini; build_quiet.h #undef's debug flags.
+  QUIET_H="${ROOT}/variants/darktec/build_quiet.h"
+  export PLATFORMIO_BUILD_FLAGS="-DBATTERY_CHEMISTRY=${chem_macro} -DBATTERY_CELLS=${cells} -DDARKTEC_BATT_PROTECT=${protect_macro} -DCFG_DEBUG=0 -DFIRMWARE_VERSION='\"${FIRMWARE_VERSION_STRING}\"' -include ${QUIET_H}"
 
   pio run -e "${pio_env}"
 

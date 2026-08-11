@@ -15,7 +15,10 @@
 3. При промахе — issue с блоком `<!-- darktec-ondemand ... -->` (метка `darktec-ondemand`).
 4. Workflow `.github/workflows/build-darktec-ondemand.yml` + `scripts/build-darktec-ondemand.sh`:
    - один `pio` env;
-   - `-DADVERT_NAME=...` и `-DDARKTEC_RADIO_CUSTOM -DLORA_*=...`;
+   - overrides (имя, химия/защита, опционально `LORA_*`) — в generated
+     `.pio/darktec_ondemand_defs.h` через `-include` (+ `build_quiet.h`);
+     **не** через `-U/-D` в `PLATFORMIO_BUILD_FLAGS` (SCons двигает `-U` в
+     конец argv и обнуляет макросы);
    - **не** вызывает `darktec-version.sh` (не бампит `bN`);
    - заливает ассеты с `--clobber`.
 

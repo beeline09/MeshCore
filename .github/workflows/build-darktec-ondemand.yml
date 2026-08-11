@@ -280,10 +280,11 @@ jobs:
         id: ver
         run: |
           # Do NOT call darktec-version.sh — it increments release bN.
-          # On-demand builds only need a label inside the binary.
-          SHA="$(git rev-parse --short=8 HEAD)"
-          echo "VERSION=ondemand-${SHA}" >> "$GITHUB_OUTPUT"
-          echo "Using FIRMWARE_VERSION=ondemand-${SHA}"
+          # Splash splits on first '-': use vX.Y.Z; script appends -od{sha8}.
+          BASE="$(grep -E '#define[[:space:]]+FIRMWARE_VERSION' examples/companion_radio/MyMesh.h | head -1 | sed -nE 's/.*v([0-9]+\.[0-9]+\.[0-9]+).*/\1/p')"
+          BASE="${BASE:-0.0.0}"
+          echo "VERSION=v${BASE}" >> "$GITHUB_OUTPUT"
+          echo "Using FIRMWARE_VERSION=v${BASE} (+ -od{sha} in build script)"
 
       - name: Build one variant
         env:
