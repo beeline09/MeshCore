@@ -15,7 +15,27 @@
  *   set path.hash.mode 1
  */
 
-#ifndef DARKTEC_RADIO_CUSTOM
+#ifdef DARKTEC_RADIO_CUSTOM
+
+/* On-demand: LORA_* приходят из -D после -U. Запасные значения, если флаги
+ * потерялись (например, из‑за кавычек в PLATFORMIO_BUILD_FLAGS). */
+#ifndef LORA_FREQ
+#define LORA_FREQ  869.075
+#endif
+#ifndef LORA_BW
+#define LORA_BW    62.5
+#endif
+#ifndef LORA_SF
+#define LORA_SF    8
+#endif
+#ifndef LORA_CR
+#define LORA_CR    8
+#endif
+#ifndef LORA_TX_POWER
+#define LORA_TX_POWER  22
+#endif
+
+#else /* !DARKTEC_RADIO_CUSTOM */
 
 #ifdef LORA_FREQ
 #undef LORA_FREQ
@@ -42,4 +62,4 @@
 #endif
 #define LORA_TX_POWER  22
 
-#endif /* !DARKTEC_RADIO_CUSTOM */
+#endif /* DARKTEC_RADIO_CUSTOM */
