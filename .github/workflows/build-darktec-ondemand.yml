@@ -201,7 +201,7 @@ jobs:
               return s
 
           freq = num("lora_freq", "869.075", 150.0, 960.0)
-          bw = num("lora_bw", "62.5", 7.0, 500.0)
+          bw = num("lora_bw", "62.5", 7.0, 1625.0)
           sf = num("lora_sf", "8", 5, 12, as_int=True)
           cr = num("lora_cr", "8", 5, 8, as_int=True)
           tx = num("lora_tx", "22", 1, 22, as_int=True)
