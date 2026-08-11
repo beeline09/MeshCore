@@ -23,5 +23,7 @@
 
 ## Ограничения
 
-- Serial DFU с GitHub asset URL упирается в CORS — в lab пока UF2-скачивание; каталогные zip с same-origin/`darktec-latest` как раньше.
+- Один Release-тег **`darktec-ondemand`** (prerelease) — все кастомные файлы внутри него.
+- Ассеты чистятся: старше **14 дней** или сверх **80** файлов (~40 сборок).
+- Serial DFU с GitHub asset URL упирается в CORS — в lab пока UF2-скачивание.
 - Публичный one-click без issue потребует PAT/Cloudflare Worker.
