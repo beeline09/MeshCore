@@ -1,0 +1,267 @@
+name: Build Darktec On-Demand
+
+# Single-variant build for custom advert names / experimental flasher.
+# Cache: GitHub Release tag `darktec-ondemand` (assets keyed by params + git sha).
+#
+# Triggers:
+#   - workflow_dispatch (manual / API)
+#   - repository_dispatch type darktec-ondemand
+#   - issues opened/edited with label darktec-ondemand (body contains <!-- darktec-ondemand ... -->)
+
+permissions:
+  contents: write
+  issues: write
+  actions: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      role_slug:
+        description: "Role slug (e.g. repeater)"
+        required: true
+        type: string
+      chem_slug:
+        description: "liion | lifepo4 | lto"
+        required: true
+        type: string
+      cells:
+        description: "1 or 2"
+        required: true
+        type: string
+        default: "1"
+      protect_slug:
+        description: "adc | off"
+        required: true
+        type: string
+        default: "adc"
+      advert_name:
+        description: "Node / advert name (optional)"
+        required: false
+        type: string
+        default: ""
+      name_slug:
+        description: "Filename slug (optional; derived from advert_name if empty)"
+        required: false
+        type: string
+        default: ""
+  repository_dispatch:
+    types: [darktec-ondemand]
+  issues:
+    types: [opened, edited]
+
+concurrency:
+  group: darktec-ondemand-${{ github.event.issue.number || github.event.client_payload.cache_key || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'repository_dispatch' ||
+      (github.event_name == 'issues' && (
+        contains(join(github.event.issue.labels.*.name, ','), 'darktec-ondemand') ||
+        contains(github.event.issue.body, '<!-- darktec-ondemand') ||
+        startsWith(github.event.issue.title, 'darktec-ondemand:')
+      ))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone Repo
+        uses: actions/checkout@v6
+        with:
+          ref: south_edition
+          fetch-depth: 0
+
+      - name: Tag issue with darktec-ondemand
+        if: github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue edit "${{ github.event.issue.number }}" --add-label "darktec-ondemand" || true
+
+      - name: Parse request
+        id: req
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          INPUT_ROLE: ${{ github.event.inputs.role_slug }}
+          INPUT_CHEM: ${{ github.event.inputs.chem_slug }}
+          INPUT_CELLS: ${{ github.event.inputs.cells }}
+          INPUT_PROTECT: ${{ github.event.inputs.protect_slug }}
+          INPUT_NAME: ${{ github.event.inputs.advert_name }}
+          INPUT_SLUG: ${{ github.event.inputs.name_slug }}
+          DISPATCH_ROLE: ${{ github.event.client_payload.role_slug }}
+          DISPATCH_CHEM: ${{ github.event.client_payload.chem_slug }}
+          DISPATCH_CELLS: ${{ github.event.client_payload.cells }}
+          DISPATCH_PROTECT: ${{ github.event.client_payload.protect_slug }}
+          DISPATCH_NAME: ${{ github.event.client_payload.advert_name }}
+          DISPATCH_SLUG: ${{ github.event.client_payload.name_slug }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import os, re, json
+          event = os.environ["EVENT_NAME"]
+          data = {}
+          if event == "workflow_dispatch":
+              data = {
+                  "role_slug": os.environ.get("INPUT_ROLE", ""),
+                  "chem_slug": os.environ.get("INPUT_CHEM", ""),
+                  "cells": os.environ.get("INPUT_CELLS", "1"),
+                  "protect_slug": os.environ.get("INPUT_PROTECT", "adc"),
+                  "advert_name": os.environ.get("INPUT_NAME", "") or "",
+                  "name_slug": os.environ.get("INPUT_SLUG", "") or "",
+              }
+          elif event == "repository_dispatch":
+              data = {
+                  "role_slug": os.environ.get("DISPATCH_ROLE", ""),
+                  "chem_slug": os.environ.get("DISPATCH_CHEM", ""),
+                  "cells": str(os.environ.get("DISPATCH_CELLS", "1")),
+                  "protect_slug": os.environ.get("DISPATCH_PROTECT", "adc"),
+                  "advert_name": os.environ.get("DISPATCH_NAME", "") or "",
+                  "name_slug": os.environ.get("DISPATCH_SLUG", "") or "",
+              }
+          else:
+              body = os.environ.get("ISSUE_BODY") or ""
+              m = re.search(r"<!--\s*darktec-ondemand\s*(.*?)\s*-->", body, re.S | re.I)
+              if not m:
+                  raise SystemExit("Issue body missing <!-- darktec-ondemand ... --> block")
+              for line in m.group(1).splitlines():
+                  line = line.strip()
+                  if not line or "=" not in line:
+                      continue
+                  k, v = line.split("=", 1)
+                  data[k.strip()] = v.strip()
+
+          role = data.get("role_slug", "")
+          chem = data.get("chem_slug", "")
+          cells = str(data.get("cells", "1"))
+          protect = data.get("protect_slug", "adc")
+          advert = data.get("advert_name", "") or ""
+          slug = data.get("name_slug", "") or ""
+
+          ROLE_MAP = {
+              "companion_radio_ble": "Darktec_companion_radio_ble",
+              "companion_radio_usb": "Darktec_companion_radio_usb",
+              "repeater": "Darktec_repeater",
+              "repeater_bridge_rs232": "Darktec_repeater_bridge_rs232_serial1",
+              "room_server": "Darktec_room_server",
+              "terminal_chat": "Darktec_terminal_chat",
+              "sensor": "Darktec_sensor",
+              "kiss_modem": "Darktec_kiss_modem",
+          }
+          CHEM_MAP = {
+              "liion": "BATTERY_CHEM_LIION",
+              "lifepo4": "BATTERY_CHEM_LIFEPO4",
+              "lto": "BATTERY_CHEM_LTO",
+          }
+          PROTECT_MAP = {
+              "adc": "DARKTEC_BATT_PROTECT_ADC",
+              "off": "DARKTEC_BATT_PROTECT_OFF",
+          }
+          if role not in ROLE_MAP:
+              raise SystemExit(f"bad role_slug: {role}")
+          if chem not in CHEM_MAP:
+              raise SystemExit(f"bad chem_slug: {chem}")
+          if cells not in ("1", "2"):
+              raise SystemExit(f"bad cells: {cells}")
+          if chem != "lto" and cells != "1":
+              raise SystemExit("cells=2 only for lto")
+          if protect not in PROTECT_MAP:
+              raise SystemExit(f"bad protect_slug: {protect}")
+
+          def make_slug(s: str) -> str:
+              s = re.sub(r"[^a-z0-9]+", "-", (s or "").lower()).strip("-")
+              return (s[:24] or "default")
+
+          if not slug:
+              slug = make_slug(advert) if advert else "default"
+
+          out = {
+              "pio_env": ROLE_MAP[role],
+              "role_slug": role,
+              "chem_slug": chem,
+              "chem_macro": CHEM_MAP[chem],
+              "cells": cells,
+              "protect_slug": protect,
+              "protect_macro": PROTECT_MAP[protect],
+              "advert_name": advert,
+              "name_slug": slug,
+          }
+          print(json.dumps(out, ensure_ascii=False, indent=2))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              for k, v in out.items():
+                  f.write(f"{k}={v}\n")
+          PY
+
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-environment
+
+      - name: Compute version label
+        id: ver
+        run: |
+          # Do NOT call darktec-version.sh — it increments release bN.
+          # On-demand builds only need a label inside the binary.
+          SHA="$(git rev-parse --short=8 HEAD)"
+          echo "VERSION=ondemand-${SHA}" >> "$GITHUB_OUTPUT"
+          echo "Using FIRMWARE_VERSION=ondemand-${SHA}"
+
+      - name: Build one variant
+        env:
+          FIRMWARE_VERSION: ${{ steps.ver.outputs.VERSION }}
+          DARKTEC_PIO_ENV: ${{ steps.req.outputs.pio_env }}
+          DARKTEC_ROLE_SLUG: ${{ steps.req.outputs.role_slug }}
+          BATTERY_CHEMISTRY: ${{ steps.req.outputs.chem_macro }}
+          BATTERY_CELLS: ${{ steps.req.outputs.cells }}
+          DARKTEC_BATT_PROTECT: ${{ steps.req.outputs.protect_macro }}
+          CHEM_SLUG: ${{ steps.req.outputs.chem_slug }}
+          PROTECT_SLUG: ${{ steps.req.outputs.protect_slug }}
+          ADVERT_NAME: ${{ steps.req.outputs.advert_name }}
+          NAME_SLUG: ${{ steps.req.outputs.name_slug }}
+        run: |
+          chmod +x scripts/build-darktec-ondemand.sh
+          /usr/bin/env bash scripts/build-darktec-ondemand.sh
+
+      - name: Ensure darktec-ondemand release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view darktec-ondemand >/dev/null 2>&1; then
+            gh release create darktec-ondemand \
+              --title "Darktec on-demand builds (cache)" \
+              --notes "Кэш кастомных сборок (имя ноды и т.п.) для экспериментального flasher /darktec_new/. Ассеты не удаляются автоматически." \
+              --latest=false
+          fi
+
+      - name: Upload assets to darktec-ondemand
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(out/Darktec_*__*.uf2 out/Darktec_*__*.zip)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No on-demand artifacts"
+            exit 1
+          fi
+          gh release upload darktec-ondemand "${files[@]}" --clobber
+          ls -la out/
+          for f in "${files[@]}"; do echo "Uploaded $(basename "$f")"; done
+
+      - name: Comment on issue
+        if: github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          UF2=$(ls out/Darktec_*__*.uf2 | head -n1)
+          BASE=$(basename "$UF2" .uf2)
+          URL_UF2="https://github.com/beeline09/MeshCore/releases/download/darktec-ondemand/${BASE}.uf2"
+          URL_ZIP="https://github.com/beeline09/MeshCore/releases/download/darktec-ondemand/${BASE}.zip"
+          gh issue comment "${{ github.event.issue.number }}" --body "$(cat <<EOF
+          ✅ Сборка готова (\`south_edition\` @ \`$(git rev-parse --short=8 HEAD)\`).
+
+          - UF2: ${URL_UF2}
+          - OTA zip: ${URL_ZIP}
+
+          Можно закрыть issue. Flasher \`/darktec_new/\` подхватит файлы по кэшу.
+          EOF
+          )"
+          gh issue edit "${{ github.event.issue.number }}" --add-label "darktec-ondemand-done" || true
