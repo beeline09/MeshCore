@@ -44,6 +44,31 @@ on:
         required: false
         type: string
         default: ""
+      lora_freq:
+        description: "LORA_FREQ MHz (default 869.075)"
+        required: false
+        type: string
+        default: "869.075"
+      lora_bw:
+        description: "LORA_BW kHz (default 62.5)"
+        required: false
+        type: string
+        default: "62.5"
+      lora_sf:
+        description: "LORA_SF (default 8)"
+        required: false
+        type: string
+        default: "8"
+      lora_cr:
+        description: "LORA_CR (default 8)"
+        required: false
+        type: string
+        default: "8"
+      lora_tx:
+        description: "LORA_TX_POWER dBm (default 22)"
+        required: false
+        type: string
+        default: "22"
   repository_dispatch:
     types: [darktec-ondemand]
   issues:
@@ -89,12 +114,22 @@ jobs:
           INPUT_PROTECT: ${{ github.event.inputs.protect_slug }}
           INPUT_NAME: ${{ github.event.inputs.advert_name }}
           INPUT_SLUG: ${{ github.event.inputs.name_slug }}
+          INPUT_FREQ: ${{ github.event.inputs.lora_freq }}
+          INPUT_BW: ${{ github.event.inputs.lora_bw }}
+          INPUT_SF: ${{ github.event.inputs.lora_sf }}
+          INPUT_CR: ${{ github.event.inputs.lora_cr }}
+          INPUT_TX: ${{ github.event.inputs.lora_tx }}
           DISPATCH_ROLE: ${{ github.event.client_payload.role_slug }}
           DISPATCH_CHEM: ${{ github.event.client_payload.chem_slug }}
           DISPATCH_CELLS: ${{ github.event.client_payload.cells }}
           DISPATCH_PROTECT: ${{ github.event.client_payload.protect_slug }}
           DISPATCH_NAME: ${{ github.event.client_payload.advert_name }}
           DISPATCH_SLUG: ${{ github.event.client_payload.name_slug }}
+          DISPATCH_FREQ: ${{ github.event.client_payload.lora_freq }}
+          DISPATCH_BW: ${{ github.event.client_payload.lora_bw }}
+          DISPATCH_SF: ${{ github.event.client_payload.lora_sf }}
+          DISPATCH_CR: ${{ github.event.client_payload.lora_cr }}
+          DISPATCH_TX: ${{ github.event.client_payload.lora_tx }}
         run: |
           set -euo pipefail
           python3 <<'PY'
@@ -109,6 +144,11 @@ jobs:
                   "protect_slug": os.environ.get("INPUT_PROTECT", "adc"),
                   "advert_name": os.environ.get("INPUT_NAME", "") or "",
                   "name_slug": os.environ.get("INPUT_SLUG", "") or "",
+                  "lora_freq": os.environ.get("INPUT_FREQ", "") or "869.075",
+                  "lora_bw": os.environ.get("INPUT_BW", "") or "62.5",
+                  "lora_sf": os.environ.get("INPUT_SF", "") or "8",
+                  "lora_cr": os.environ.get("INPUT_CR", "") or "8",
+                  "lora_tx": os.environ.get("INPUT_TX", "") or "22",
               }
           elif event == "repository_dispatch":
               data = {
@@ -118,6 +158,11 @@ jobs:
                   "protect_slug": os.environ.get("DISPATCH_PROTECT", "adc"),
                   "advert_name": os.environ.get("DISPATCH_NAME", "") or "",
                   "name_slug": os.environ.get("DISPATCH_SLUG", "") or "",
+                  "lora_freq": os.environ.get("DISPATCH_FREQ", "") or "869.075",
+                  "lora_bw": os.environ.get("DISPATCH_BW", "") or "62.5",
+                  "lora_sf": os.environ.get("DISPATCH_SF", "") or "8",
+                  "lora_cr": os.environ.get("DISPATCH_CR", "") or "8",
+                  "lora_tx": os.environ.get("DISPATCH_TX", "") or "22",
               }
           else:
               body = os.environ.get("ISSUE_BODY") or ""
@@ -137,6 +182,29 @@ jobs:
           protect = data.get("protect_slug", "adc")
           advert = data.get("advert_name", "") or ""
           slug = data.get("name_slug", "") or ""
+
+          def num(key, default, lo, hi, as_int=False):
+              raw = str(data.get(key, default) or default).strip().replace(",", ".")
+              try:
+                  v = float(raw)
+              except ValueError as e:
+                  raise SystemExit(f"bad {key}: {raw}") from e
+              if v < lo or v > hi:
+                  raise SystemExit(f"{key} out of range [{lo},{hi}]: {v}")
+              if as_int:
+                  iv = int(v)
+                  if iv != v:
+                      raise SystemExit(f"{key} must be integer: {raw}")
+                  return str(iv)
+              # trim trailing zeros for floats
+              s = f"{v:.6f}".rstrip("0").rstrip(".")
+              return s
+
+          freq = num("lora_freq", "869.075", 150.0, 960.0)
+          bw = num("lora_bw", "62.5", 7.0, 500.0)
+          sf = num("lora_sf", "8", 5, 12, as_int=True)
+          cr = num("lora_cr", "8", 5, 8, as_int=True)
+          tx = num("lora_tx", "22", 1, 22, as_int=True)
 
           ROLE_MAP = {
               "companion_radio_ble": "Darktec_companion_radio_ble",
@@ -185,6 +253,11 @@ jobs:
               "protect_macro": PROTECT_MAP[protect],
               "advert_name": advert,
               "name_slug": slug,
+              "lora_freq": freq,
+              "lora_bw": bw,
+              "lora_sf": sf,
+              "lora_cr": cr,
+              "lora_tx": tx,
           }
           print(json.dumps(out, ensure_ascii=False, indent=2))
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
@@ -216,6 +289,11 @@ jobs:
           PROTECT_SLUG: ${{ steps.req.outputs.protect_slug }}
           ADVERT_NAME: ${{ steps.req.outputs.advert_name }}
           NAME_SLUG: ${{ steps.req.outputs.name_slug }}
+          LORA_FREQ: ${{ steps.req.outputs.lora_freq }}
+          LORA_BW: ${{ steps.req.outputs.lora_bw }}
+          LORA_SF: ${{ steps.req.outputs.lora_sf }}
+          LORA_CR: ${{ steps.req.outputs.lora_cr }}
+          LORA_TX_POWER: ${{ steps.req.outputs.lora_tx }}
         run: |
           chmod +x scripts/build-darktec-ondemand.sh
           /usr/bin/env bash scripts/build-darktec-ondemand.sh
