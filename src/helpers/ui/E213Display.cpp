@@ -167,11 +167,7 @@ void E213Display::setCursor(int x, int y) {
 
 void E213Display::print(const char *str) {
   display_crc.update<char>(str, strlen(str));
-#ifdef CYRILLIC_SUPPORT
-  char cp[256];
-  translateUTF8ToBlocks(cp, str, sizeof(cp));
-  str = cp;
-#endif
+  // Caller already translated UTF-8 → CP1251; do not translate again.
     display->print(str);
 }
 
@@ -219,11 +215,6 @@ void E213Display::drawXbm(int x, int y, const uint8_t *bits, int w, int h) {
 }
 
 uint16_t E213Display::getTextWidth(const char *str) {
-#ifdef CYRILLIC_SUPPORT
-  char cp[256];
-  translateUTF8ToBlocks(cp, str, sizeof(cp));
-  str = cp;
-#endif
   int16_t x1, y1;
   uint16_t w, h;
   display->getTextBounds(str, 0, 0, &x1, &y1, &w, &h);
