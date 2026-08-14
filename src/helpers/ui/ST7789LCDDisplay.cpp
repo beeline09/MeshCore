@@ -135,7 +135,11 @@ void ST7789LCDDisplay::setCursor(int x, int y) {
 }
 
 void ST7789LCDDisplay::print(const char* str) {
-  // Caller already translated UTF-8 → CP1251; do not translate again.
+#ifdef CYRILLIC_SUPPORT
+  char cp[256];
+  translateUTF8ToBlocks(cp, str, sizeof(cp));
+  str = cp;
+#endif
   display.print(str);
 }
 
@@ -167,6 +171,11 @@ void ST7789LCDDisplay::drawXbm(int x, int y, const uint8_t* bits, int w, int h) 
 }
 
 uint16_t ST7789LCDDisplay::getTextWidth(const char* str) {
+#ifdef CYRILLIC_SUPPORT
+  char cp[256];
+  translateUTF8ToBlocks(cp, str, sizeof(cp));
+  str = cp;
+#endif
   int16_t x1, y1;
   uint16_t w, h;
   display.getTextBounds(str, 0, 0, &x1, &y1, &w, &h);

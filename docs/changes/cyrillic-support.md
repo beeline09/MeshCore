@@ -54,12 +54,10 @@
 | `src/helpers/ui/ST7789LCDDisplay.cpp` | ST7789 LCD |
 
 Паттерн изменений в каждом:
-1. `#include "glcdfont6x8.h"` (или `OLEDDisplayFontsRU.h` для OLEDDisplay-based).
+1. `#include "glcdfont6x8.h"` (или `OLEDDisplayFontsRU.h` для SSD1306).
 2. В инициализаторе дисплея: `display->setFont(&glcdfont6x8)` (или соответствующий RU-шрифт).
 3. `setTextSize(sz)`: сохраняет `_font_size = sz`.
 4. `setCursor(x, y)`: сохраняет `_cursor_y_raw = y`; добавляет смещение базовой линии GFXfont `(_font_size * 7)` чтобы вызывающий код мог использовать координаты левого верхнего угла.
-5. **`print()` / `getTextWidth()` не вызывают `translateUTF8ToBlocks`** — ui-new уже
-   переводит UTF-8→CP1251 до вывода. Повторный перевод превращает кириллицу в `®` (0xAE).
 
 ---
 

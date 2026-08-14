@@ -83,8 +83,11 @@ void SSD1306Display::setCursor(int x, int y) {
 }
 
 void SSD1306Display::print(const char* str) {
-  // ui-new already runs translateUTF8ToBlocks() → CP1251 before print/getTextWidth.
-  // Re-translating here turns Cyrillic into 0xAE (®) placeholders.
+#ifdef CYRILLIC_SUPPORT
+  char cp[256];
+  translateUTF8ToBlocks(cp, str, sizeof(cp));
+  str = cp;
+#endif
   display.print(str);
 }
 
@@ -101,6 +104,11 @@ void SSD1306Display::drawXbm(int x, int y, const uint8_t* bits, int w, int h) {
 }
 
 uint16_t SSD1306Display::getTextWidth(const char* str) {
+#ifdef CYRILLIC_SUPPORT
+  char cp[256];
+  translateUTF8ToBlocks(cp, str, sizeof(cp));
+  str = cp;
+#endif
   int16_t x1, y1;
   uint16_t w, h;
   display.getTextBounds(str, 0, 0, &x1, &y1, &w, &h);
