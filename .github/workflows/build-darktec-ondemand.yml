@@ -356,7 +356,7 @@ jobs:
           chmod +x scripts/prune-darktec-ondemand.sh
           /usr/bin/env bash scripts/prune-darktec-ondemand.sh
 
-      - name: Notify Pages to mirror OTA zip (Serial DFU / CORS)
+      - name: Notify Pages to mirror on-demand assets
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.PAGES_DISPATCH_TOKEN }}
@@ -367,12 +367,12 @@ jobs:
             exit 0
           fi
           shopt -s nullglob
-          zips=(out/Darktec_*__*.zip)
-          if [ ${#zips[@]} -eq 0 ]; then
-            echo "No zip to mirror"
+          files=(out/Darktec_*__*.uf2 out/Darktec_*__*.zip)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No assets to mirror"
             exit 0
           fi
-          ASSETS=$(printf '%s,' "${zips[@]##*/}")
+          ASSETS=$(printf '%s,' "${files[@]##*/}")
           ASSETS="${ASSETS%,}"
           gh api \
             --method POST \
