@@ -356,6 +356,32 @@ jobs:
           chmod +x scripts/prune-darktec-ondemand.sh
           /usr/bin/env bash scripts/prune-darktec-ondemand.sh
 
+
+      - name: Notify Pages to mirror on-demand assets
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.PAGES_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "PAGES_DISPATCH_TOKEN not set — custom Serial DFU needs site mirror"
+            exit 0
+          fi
+          shopt -s nullglob
+          files=(out/Darktec_*__*.uf2 out/Darktec_*__*.zip)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No assets to mirror"
+            exit 0
+          fi
+          ASSETS=$(printf '%s,' "${files[@]##*/}")
+          ASSETS="${ASSETS%,}"
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            /repos/beeline09/beeline09.github.io/dispatches \
+            -f event_type='darktec-ondemand' \
+            -f "client_payload[assets]=${ASSETS}"
+
       - name: Comment on issue
         if: github.event_name == 'issues'
         env:
@@ -371,7 +397,8 @@ jobs:
           - UF2: ${URL_UF2}
           - OTA zip: ${URL_ZIP}
 
-          Можно закрыть issue. Flasher \`/darktec_new/\` подхватит файлы по кэшу.
+          Можно закрыть issue. Flasher \`/darktec_new/\` подхватит файлы после зеркала Pages (~1–2 мин).
+          «Прошить» (Serial) и OTA с телефона используют \`.zip\`.
           EOF
           )"
           gh issue edit "${{ github.event.issue.number }}" --add-label "darktec-ondemand-done" || true
