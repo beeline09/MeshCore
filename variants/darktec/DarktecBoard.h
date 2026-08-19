@@ -22,11 +22,39 @@
 #define  ADC_MULTIPLIER   (1.750f)
 
 #include "DarktecAdcPower.h"
+#include <Adafruit_INA3221.h>
+
+// INA3221: зарядка пакета на 2-м канале (Adafruit 0-based: CH1=0, CH2=1, CH3=2).
+#ifndef TELEM_INA3221_ADDRESS
+#define TELEM_INA3221_ADDRESS 0x42
+#endif
+#ifndef TELEM_INA3221_SHUNT_VALUE
+#define TELEM_INA3221_SHUNT_VALUE 0.050f
+#endif
+#ifndef DARKTEC_INA_CHARGE_CH
+#define DARKTEC_INA_CHARGE_CH 1
+#endif
+#ifndef DARKTEC_CHARGE_ON_MA
+#define DARKTEC_CHARGE_ON_MA  30.0f
+#endif
+#ifndef DARKTEC_CHARGE_OFF_MA
+#define DARKTEC_CHARGE_OFF_MA 8.0f
+#endif
 
 class DarktecBoard : public NRF52BoardDCDC {
 protected:
   uint8_t btn_prev_state;
   float adc_mult = ADC_MULTIPLIER;
+  Adafruit_INA3221 _ina;
+  bool _ina_ok = false;
+  bool _charging = false;
+  bool _txing = false;
+  bool _rxing = false;
+  uint32_t _ina_last_ms = 0;
+  uint32_t _tx_hold_until = 0;
+  uint32_t _rx_hold_until = 0;
+
+  void pollChargeSense();
 #ifdef NRF52_POWER_MANAGEMENT
   void initiateShutdown(uint8_t reason) override;
 #endif
@@ -34,6 +62,20 @@ protected:
 public:
   DarktecBoard() : NRF52Board("Darktec_OTA") {}
   void begin();
+  bool isCharging();
+  bool isExternalPowered() override;
+  bool isLoRaActivity() const {
+    return _txing || _rxing
+        || (int32_t)(millis() - _tx_hold_until) < 0
+        || (int32_t)(millis() - _rx_hold_until) < 0;
+  }
+  void setLoRaReceiving(bool v) { _rxing = v; }
+  void onLoRaPacketReceived() { _rx_hold_until = millis() + 80; }
+  void onBeforeTransmit() override { _txing = true; }
+  void onAfterTransmit() override {
+    _txing = false;
+    _tx_hold_until = millis() + 80;  // короткий хвост, чтобы вспышка была видна на OLED
+  }
 
   #define BATTERY_SAMPLES 8
 
