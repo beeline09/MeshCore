@@ -171,18 +171,88 @@ jobs:
             out/Darktec_uf2_${{ env.VERSION }}.zip
 
       - name: Update darktec-latest pointer
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: darktec-latest
-          name: Darktec Firmware (latest → ${{ env.VERSION }})
-          body_path: /tmp/darktec-changelog.md
-          make_latest: true
-          overwrite_files: true
-          fail_on_unmatched_files: true
-          files: |
-            out/Darktec_*_*s_*.uf2
-            out/Darktec_*_*s_*.zip
-            out/Darktec_uf2_latest.zip
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          files=(out/Darktec_*_*s_*.uf2 out/Darktec_*_*s_*.zip out/Darktec_uf2_latest.zip)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No latest assets to upload"
+            exit 1
+          fi
+
+          retry_gh() {
+            local max_attempts="$1"
+            shift
+            local attempt=1
+            local delay=15
+            local out rc
+            while true; do
+              set +e
+              out="$("$@" 2>&1)"
+              rc=$?
+              set -e
+              if [ $rc -eq 0 ]; then
+                printf '%s\n' "$out"
+                return 0
+              fi
+              printf '%s\n' "$out" >&2
+              if [ $attempt -ge $max_attempts ]; then
+                return $rc
+              fi
+              if [[ "$out" == *"secondary rate limit"* ]] || [[ "$out" == *"Secondary rate limit"* ]]; then
+                echo "Rate limited. Sleep ${delay}s before retry ${attempt}/${max_attempts}..." >&2
+                sleep "$delay"
+                delay=$((delay * 2))
+              else
+                echo "Command failed without rate-limit marker; retry ${attempt}/${max_attempts} in 5s..." >&2
+                sleep 5
+              fi
+              attempt=$((attempt + 1))
+            done
+          }
+
+          if ! gh release view darktec-latest >/dev/null 2>&1; then
+            gh release create darktec-latest \
+              --title "Darktec Firmware (latest → ${VERSION})" \
+              --notes-file /tmp/darktec-changelog.md \
+              --latest=false
+          fi
+
+          gh release edit darktec-latest \
+            --title "Darktec Firmware (latest → ${VERSION})" \
+            --notes-file /tmp/darktec-changelog.md \
+            --latest
+
+          mapfile -t wanted_names < <(
+            for f in "${files[@]}"; do
+              basename "$f"
+            done | sort -u
+          )
+
+          mapfile -t existing_names < <(
+            gh release view darktec-latest --json assets --jq '.assets[].name'
+          )
+
+          for asset in "${existing_names[@]}"; do
+            keep=0
+            for wanted in "${wanted_names[@]}"; do
+              if [ "$asset" = "$wanted" ]; then
+                keep=1
+                break
+              fi
+            done
+            if [ $keep -eq 0 ]; then
+              retry_gh 5 gh release delete-asset darktec-latest "$asset" --yes
+            fi
+          done
+
+          for f in "${files[@]}"; do
+            retry_gh 5 gh release upload darktec-latest "$f" --clobber
+            sleep 1
+          done
 
       - name: Notify Pages site to sync manifest
         continue-on-error: true
