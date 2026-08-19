@@ -214,14 +214,14 @@ jobs:
             done
           }
 
-          if ! gh release view darktec-latest >/dev/null 2>&1; then
-            gh release create darktec-latest \
+          if ! gh release view darktec-latest -R "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create darktec-latest -R "${GITHUB_REPOSITORY}" \
               --title "Darktec Firmware (latest → ${VERSION})" \
               --notes-file /tmp/darktec-changelog.md \
               --latest=false
           fi
 
-          gh release edit darktec-latest \
+          gh release edit darktec-latest -R "${GITHUB_REPOSITORY}" \
             --title "Darktec Firmware (latest → ${VERSION})" \
             --notes-file /tmp/darktec-changelog.md \
             --latest
@@ -233,7 +233,7 @@ jobs:
           )
 
           mapfile -t existing_names < <(
-            gh release view darktec-latest --json assets --jq '.assets[].name'
+            gh release view darktec-latest -R "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name'
           )
 
           for asset in "${existing_names[@]}"; do
@@ -245,12 +245,12 @@ jobs:
               fi
             done
             if [ $keep -eq 0 ]; then
-              retry_gh 5 gh release delete-asset darktec-latest "$asset" --yes
+              retry_gh 5 gh release delete-asset darktec-latest "$asset" -R "${GITHUB_REPOSITORY}" --yes
             fi
           done
 
           for f in "${files[@]}"; do
-            retry_gh 5 gh release upload darktec-latest "$f" --clobber
+            retry_gh 5 gh release upload darktec-latest "$f" -R "${GITHUB_REPOSITORY}" --clobber
             sleep 1
           done
 
