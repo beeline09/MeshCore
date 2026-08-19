@@ -48,7 +48,11 @@ protected:
   Adafruit_INA3221 _ina;
   bool _ina_ok = false;
   bool _charging = false;
+  bool _txing = false;
+  bool _rxing = false;
   uint32_t _ina_last_ms = 0;
+  uint32_t _tx_hold_until = 0;
+  uint32_t _rx_hold_until = 0;
 
   void pollChargeSense();
 #ifdef NRF52_POWER_MANAGEMENT
@@ -60,6 +64,18 @@ public:
   void begin();
   bool isCharging();
   bool isExternalPowered() override;
+  bool isLoRaActivity() const {
+    return _txing || _rxing
+        || (int32_t)(millis() - _tx_hold_until) < 0
+        || (int32_t)(millis() - _rx_hold_until) < 0;
+  }
+  void setLoRaReceiving(bool v) { _rxing = v; }
+  void onLoRaPacketReceived() { _rx_hold_until = millis() + 80; }
+  void onBeforeTransmit() override { _txing = true; }
+  void onAfterTransmit() override {
+    _txing = false;
+    _tx_hold_until = millis() + 80;  // короткий хвост, чтобы вспышка была видна на OLED
+  }
 
   #define BATTERY_SAMPLES 8
 

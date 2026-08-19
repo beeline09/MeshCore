@@ -15,7 +15,7 @@
 #include <RadioLib.h>
 #include <helpers/radiolib/RadioLibWrappers.h>
 #include <DarktecBoard.h>
-#include <helpers/radiolib/CustomSX1262Wrapper.h>
+#include <DarktecSX1262Wrapper.h>
 #include <helpers/AutoDiscoverRTCClock.h>
 #ifdef DISPLAY_CLASS
   #include <DarktecDisplay.h>
