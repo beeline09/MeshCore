@@ -35,10 +35,10 @@
 #define DARKTEC_INA_CHARGE_CH 1
 #endif
 #ifndef DARKTEC_CHARGE_ON_MA
-#define DARKTEC_CHARGE_ON_MA  30.0f
+#define DARKTEC_CHARGE_ON_MA  120.0f
 #endif
 #ifndef DARKTEC_CHARGE_OFF_MA
-#define DARKTEC_CHARGE_OFF_MA 8.0f
+#define DARKTEC_CHARGE_OFF_MA 100.0f
 #endif
 
 class DarktecBoard : public NRF52BoardDCDC {
