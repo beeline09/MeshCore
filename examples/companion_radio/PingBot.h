@@ -45,6 +45,12 @@
   #define PING_BOT_MAX_PER_HOUR 30
 #endif
 
+// how many senders can sit in cooldown at once; the oldest entry is evicted when full,
+// which lets that sender through early. ~36 bytes of RAM each.
+#ifndef PING_BOT_COOLDOWN_SLOTS
+  #define PING_BOT_COOLDOWN_SLOTS 32
+#endif
+
 /* --------------------- compile-time sanity checks --------------------- */
 
 #if PING_BOT_MAX_MSG_LEN > MAX_TEXT_LEN
@@ -57,6 +63,18 @@
 
 #if PING_BOT_WINDOW_MS < 1000 || PING_BOT_WINDOW_MS > 60000
   #error "PING_BOT_WINDOW_MS must be between 1000 and 60000 ms."
+#endif
+
+#if PING_BOT_COOLDOWN_SEC < 0 || PING_BOT_COOLDOWN_SEC > 86400
+  #error "PING_BOT_COOLDOWN_SEC must be between 0 (no cooldown) and 86400 (a day)."
+#endif
+
+#if PING_BOT_MAX_PER_HOUR < 1 || PING_BOT_MAX_PER_HOUR > 65535
+  #error "PING_BOT_MAX_PER_HOUR must be between 1 and 65535 (the counter is a uint16_t)."
+#endif
+
+#if PING_BOT_COOLDOWN_SLOTS < 1 || PING_BOT_COOLDOWN_SLOTS > 256
+  #error "PING_BOT_COOLDOWN_SLOTS must be between 1 and 256 (each slot costs ~36 bytes of RAM)."
 #endif
 
 static_assert(sizeof(PING_BOT_NAME) - 1 >= 1,
@@ -81,7 +99,6 @@ static_assert(PING_BOT_REGION[0] != '#',
 /* ---------------------------------------------------------------------- */
 
 #define PING_BOT_CHANNEL_NAME  "#" PING_BOT_GROUP
-#define PING_BOT_COOLDOWN_SLOTS 8
 
 class MyMesh;
 
