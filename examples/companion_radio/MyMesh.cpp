@@ -3,6 +3,8 @@
 #include <Arduino.h> // needed for PlatformIO
 #include <Mesh.h>
 
+#include "LoraStatusLed.h"
+
 #define CMD_APP_START                 1
 #define CMD_SEND_TXT_MSG              2
 #define CMD_SEND_CHANNEL_TXT_MSG      3
@@ -348,6 +350,10 @@ uint8_t MyMesh::getExtraAckTransmitCount() const {
 }
 
 void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
+#ifdef STATUS_LED_LORA_ACTIVITY
+  lora_status_led.noteRx();   // fires for every packet off the air, ours or not
+#endif
+
   const uint8_t* log_raw = raw;
   int log_len = len;
   uint8_t mapped[MAX_TRANS_UNIT];
@@ -367,6 +373,18 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
     _serial->writeFrame(out_frame, i);
   }
 }
+
+#ifdef STATUS_LED_LORA_ACTIVITY
+
+void MyMesh::logTx(mesh::Packet* packet, int len) {
+  lora_status_led.noteTx();
+}
+
+void MyMesh::logTxFail(mesh::Packet* packet, int len) {
+  lora_status_led.noteTx();
+}
+
+#endif
 
 bool MyMesh::isAutoAddEnabled() const {
   return (_prefs.manual_add_contacts & 1) == 0;

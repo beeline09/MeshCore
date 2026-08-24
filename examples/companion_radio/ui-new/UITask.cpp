@@ -1,5 +1,6 @@
 #include "UITask.h"
 #include <helpers/TxtDataHelpers.h>
+#include "../LoraStatusLed.h"
 #include "../MyMesh.h"
 #include "target.h"
 #include <time.h>
@@ -16,6 +17,18 @@
 #define LED_ON_MILLIS     20
 #define LED_ON_MSG_MILLIS 200
 #define LED_CYCLE_MILLIS  4000
+#endif
+
+// Some boards wire the vibration motor and the status LED to the same pin. Vibration holds
+// that pin high for seconds on any UI event, which would swamp the LoRa activity blinks, so
+// the LED wins when it is the one following traffic.
+#if defined(PIN_VIBRATION) && defined(PIN_STATUS_LED) && defined(STATUS_LED_LORA_ACTIVITY) && \
+    (PIN_VIBRATION == PIN_STATUS_LED)
+  #define UI_VIBRATION_YIELDS_TO_LED
+#endif
+
+#if defined(PIN_VIBRATION) && !defined(UI_VIBRATION_YIELDS_TO_LED)
+  #define UI_VIBRATION_ACTIVE
 #endif
 
 #define LONG_PRESS_MILLIS   1200
@@ -1564,8 +1577,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   buzzer.startup();
 #endif
 
-#ifdef PIN_VIBRATION
+#ifdef UI_VIBRATION_ACTIVE
   vibration.begin();
+#endif
+
+#if defined(STATUS_LED_LORA_ACTIVITY) && defined(PIN_STATUS_LED)
+  lora_status_led.begin();
 #endif
 
   ui_started_at = millis();
@@ -1652,7 +1669,7 @@ switch(t){
 }
 #endif
 
-#ifdef PIN_VIBRATION
+#ifdef UI_VIBRATION_ACTIVE
   // Trigger vibration for all UI events except none
   if (t != UIEventType::none) {
     vibration.trigger();
@@ -1736,7 +1753,9 @@ void UITask::gotoMsgHistory() {
 }
 
 void UITask::userLedHandler() {
-#ifdef PIN_STATUS_LED
+#if defined(STATUS_LED_LORA_ACTIVITY) && defined(PIN_STATUS_LED)
+  lora_status_led.loop();
+#elif defined(PIN_STATUS_LED)
   int cur_time = millis();
   if (cur_time > next_led_change) {
     if (led_state == 0) {
@@ -1963,7 +1982,7 @@ void UITask::loop() {
 #endif
   }
 
-#ifdef PIN_VIBRATION
+#ifdef UI_VIBRATION_ACTIVE
   vibration.loop();
 #endif
 

@@ -159,6 +159,10 @@ protected:
 #ifdef WITH_PING_BOT
   void logRx(mesh::Packet* packet, int len, float score) override;
 #endif
+#ifdef STATUS_LED_LORA_ACTIVITY
+  void logTx(mesh::Packet* packet, int len) override;
+  void logTxFail(mesh::Packet* packet, int len) override;
+#endif
   bool isAutoAddEnabled() const override;
   bool shouldAutoAddContactType(uint8_t type) const override;
   bool shouldOverwriteWhenFull() const override;

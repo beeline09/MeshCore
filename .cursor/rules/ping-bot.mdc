@@ -122,6 +122,21 @@ WiFi-варианта нет физически, только BLE и USB.
   на запись. 500 контактов ≈ 75 КБ. При дальнейшем росте упрёмся в файловую систему.
 - Замеры FaketecMiniX: USB — RAM 60.1% / Flash 64.0%, BLE — RAM 62.0% / Flash 64.8%.
 
+## Светодиод как индикатор LoRa
+
+Штатный `UITask::userLedHandler()` мигает по таймеру (цикл 4 с) и к радио отношения не имеет.
+Дефайн `STATUS_LED_LORA_ACTIVITY` переключает `PIN_STATUS_LED` на трафик: в покое погашен,
+короткая вспышка на приём (`STATUS_LED_RX_MILLIS`, 60 мс), длинная на передачу
+(`STATUS_LED_TX_MILLIS`, 250 мс). Длинный импульс не обрезается коротким.
+
+Логика — в `examples/companion_radio/LoraStatusLed.h/.cpp`, события берутся из
+`MyMesh::logRxRaw()` (любой пакет из эфира) и `MyMesh::logTx()` / `logTxFail()`.
+`UITask` только вызывает `begin()` и `loop()`; без дефайна ветка heartbeat не меняется.
+
+На FaketecMiniX `PIN_VIBRATION` и `PIN_STATUS_LED` — **один и тот же пин 1**, а вибро
+держит его до 5 секунд на любое UI-событие. Поэтому при `STATUS_LED_LORA_ACTIVITY` и
+совпадении пинов вибро в `UITask` отключается (`UI_VIBRATION_ACTIVE`).
+
 ## Попутный фикс, не откатывать
 
 `ui-new/UITask.cpp` использовал `joystick_down`, который не объявлен ни в одном варианте
