@@ -71,11 +71,11 @@
 /* --------------------- проверки на этапе компиляции -------------------- */
 
 #if PING_BOT_MAX_MSG_LEN > MAX_TEXT_LEN
-  #error "PING_BOT_MAX_MSG_LEN больше MAX_TEXT_LEN (160). sendGroupMessage() молча обрежет ответ и срежет хвост '-N hops'. Уменьшите PING_BOT_MAX_MSG_LEN до 160 или меньше."
+  #error "PING_BOT_MAX_MSG_LEN больше MAX_TEXT_LEN (160). sendGroupMessage() молча обрежет ответ и срежет хвост 'N hops'. Уменьшите PING_BOT_MAX_MSG_LEN до 160 или меньше."
 #endif
 
 #if PING_BOT_MAX_MSG_LEN < 48
-  #error "PING_BOT_MAX_MSG_LEN слишком мал: не вмещает даже '@<отправитель>' и '-N hops'. Укажите 48 или больше."
+  #error "PING_BOT_MAX_MSG_LEN слишком мал: не вмещает даже '@[<отправитель>]' и 'N hops'. Укажите 48 или больше."
 #endif
 
 #if PING_BOT_WINDOW_MS < 1000 || PING_BOT_WINDOW_MS > 60000
@@ -154,7 +154,7 @@ private:
   /** Сколько байт остаётся под текст после префикса "<имя ноды>: ". */
   int availableTextLen() const;
 
-  int renderNamed(char* out, int out_sz, bool with_hex) const;
+  int renderNamed(char* out, int out_sz, bool with_hex, int elide = 0) const;
   int renderCompact(char* out, int out_sz, int elide) const;
 
   MyMesh*  _mesh = nullptr;

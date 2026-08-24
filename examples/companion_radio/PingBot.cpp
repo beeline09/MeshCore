@@ -98,13 +98,59 @@ bool matchesTrigger(const char* folded, const char* latin, const char* cyrillic)
   return false;
 }
 
+void putLineBreak(Appender& a) {
+  a.put('\r');
+  a.put('\n');
+}
+
+/**
+ * Упоминание отправителя. Скобки обязательны: клиенты MeshCore (официальное приложение
+ * с 1.27, веб-клиенты) распознают именно `@[Имя]` и превращают его в кликабельный бейдж,
+ * ведущий в личку. Голое `@Имя` остаётся просто текстом.
+ *
+ * Официальный ответ — `@[Имя] ` с пробелом после скобки: без него бейдж не кликается.
+ * Сразу перевод строки клиент схлопывает, поэтому после пробела ещё U+200B и `\r\n`.
+ */
+void putMention(Appender& a, const char* sender) {
+  a.put("@[");
+  a.put(sender);
+  a.put("] ");
+  a.put("\xE2\x80\x8B");  // U+200B: чтобы пробел/перевод не съелись вместе с упоминанием
+  putLineBreak(a);
+}
+
+/** Одна запись маршрута: имя, если резолвится, иначе hex. Имя и hex не «все или ничего».
+ *  Hex — ровно hash_size байт из path пакета (1/2/3). Это размер, которым отправитель
+ *  ping собрал маршрут; у всех хопов в одном пакете он один и тот же.
+ */
+void putHopLine(Appender& a, MyMesh* mesh, const uint8_t* hop, uint8_t hash_size, bool with_hex,
+                bool newline) {
+  char hex[2 * 3 + 1];
+  toLowerHex(hex, hop, hash_size);
+
+  char name[32];
+  if (mesh->lookupRepeaterByHash(hop, hash_size, name, sizeof(name)) == 1) {
+    a.put(name);
+    if (with_hex) {
+      a.put('[');
+      a.put(hex);
+      a.put(']');
+    }
+  } else {
+    a.put('[');   // без скобок hex не отличить от короткого имени
+    a.put(hex);
+    a.put(']');
+  }
+  if (newline) putLineBreak(a);
+}
+
 void putHopsTail(Appender& a, uint8_t hop_count) {
   if (hop_count == 0) {   // услышали отправителя напрямую, репитеров между нами нет
-    a.put("-0 hops - Direct");
+    a.put("0 hops - Direct");
     return;
   }
   char tail[24];
-  snprintf(tail, sizeof(tail), "-%u hops", (unsigned)hop_count);
+  snprintf(tail, sizeof(tail), "%u hops", (unsigned)hop_count);
   a.put(tail);
 }
 
@@ -168,22 +214,34 @@ void MyMesh::logRx(mesh::Packet* packet, int len, float score) {
 
 int MyMesh::lookupRepeaterByHash(const uint8_t* hash, uint8_t hash_len, char* out_name,
                                  size_t out_sz) {
-  int matches = 0;
+  // 1-байтовый path-хеш часто совпадает у нескольких контактов — из-за этого раньше
+  // имя выбрасывалось, даже если репитер в базе есть. Берём наиболее свежий advert,
+  // репитера предпочитаем остальным типам.
+  ContactInfo best;
+  bool have = false;
   int total = getNumContacts();
   for (int i = 0; i < total; i++) {
     ContactInfo contact;
     if (!getContactByIdx(i, contact)) continue;
-    if (contact.type != ADV_TYPE_REPEATER) continue;
     if (memcmp(contact.id.pub_key, hash, hash_len) != 0) continue;
 
-    if (++matches == 1) {
-      strncpy(out_name, contact.name, out_sz - 1);
-      out_name[out_sz - 1] = 0;
-    } else {
-      return matches;  // неоднозначно: вызывающий код напечатает hex
+    if (!have) {
+      best = contact;
+      have = true;
+      continue;
+    }
+    bool is_rep = contact.type == ADV_TYPE_REPEATER;
+    bool best_rep = best.type == ADV_TYPE_REPEATER;
+    if (is_rep && !best_rep) {
+      best = contact;
+    } else if (is_rep == best_rep && contact.lastmod > best.lastmod) {
+      best = contact;
     }
   }
-  return matches;
+  if (!have) return 0;
+  strncpy(out_name, best.name, out_sz - 1);
+  out_name[out_sz - 1] = 0;
+  return 1;
 }
 
 bool MyMesh::sendPingBotReply(uint8_t channel_idx, const char* text) {
@@ -346,11 +404,22 @@ int PingBot::availableTextLen() const {
 void PingBot::sendPongReply(const char* sender) {
   if (isRateLimited(sender)) return;
 
-  if ((int)strlen(PING_BOT_PONG_REPLY) > availableTextLen()) {
-    MESH_DEBUG_PRINTLN("PingBot: имя ноды не оставляет места под ответ на pong");
-    return;
+  int avail = availableTextLen();
+
+  char buf[PING_BOT_MAX_MSG_LEN + 1];
+  Appender a(buf, sizeof(buf));
+  putMention(a, sender);
+  a.put(PING_BOT_PONG_REPLY);
+
+  const char* text = buf;
+  if (a.needed > avail) {   // длинное имя отправителя: отвечаем без упоминания
+    text = PING_BOT_PONG_REPLY;
+    if ((int)strlen(text) > avail) {
+      MESH_DEBUG_PRINTLN("PingBot: имя ноды не оставляет места под ответ на pong");
+      return;
+    }
   }
-  if (_mesh->sendPingBotReply(_channel_idx, PING_BOT_PONG_REPLY)) {
+  if (_mesh->sendPingBotReply(_channel_idx, text)) {
     noteReply(sender);
   }
 }
@@ -365,42 +434,49 @@ void PingBot::sendReply() {
   }
 
   char buf[PING_BOT_MAX_MSG_LEN + 1];
-  int needed = renderNamed(buf, sizeof(buf), true);
-  if (needed > avail) needed = renderNamed(buf, sizeof(buf), false);
+  // имена держим на каждом хопе, где они есть; не скатываемся в голый hex из-за
+  // одного неизвестного репитера. Если не влезает — сначала без скобок, потом элизия.
+  int needed = renderNamed(buf, sizeof(buf), true, 0);
+  if (needed > avail) needed = renderNamed(buf, sizeof(buf), false, 0);
+  for (int elide = 1; needed > avail && elide <= _best_hop_count; elide++) {
+    needed = renderNamed(buf, sizeof(buf), false, elide);
+  }
   for (int elide = 0; needed > avail && elide <= _best_hop_count; elide++) {
     needed = renderCompact(buf, sizeof(buf), elide);
   }
-  if (needed > avail) return;  // не отправляем маршрут, у которого срезан хвост '-N hops'
+  if (needed > avail) return;  // не отправляем маршрут, у которого срезан хвост 'N hops'
 
   if (_mesh->sendPingBotReply(_channel_idx, buf)) {
     noteReply(_sender);
   }
 }
 
-int PingBot::renderNamed(char* out, int out_sz, bool with_hex) const {
+int PingBot::renderNamed(char* out, int out_sz, bool with_hex, int elide) const {
   Appender a(out, out_sz);
-  a.put('@');
-  a.put(_sender);
-  a.put('\n');
+  putMention(a, _sender);
 
+  int total = _best_hop_count;
   // path[0] — репитер, услышавший отправителя первым, поэтому печатаем его последним
-  for (int i = (int)_best_hop_count - 1; i >= 0; i--) {
-    const uint8_t* hop = &_best_path[i * _best_hash_size];
-    char hex[2 * 3 + 1];
-    toLowerHex(hex, hop, _best_hash_size);
+  if (total > 0 && elide < total) {
+    int shown = total - elide;
+    int head = (shown + 1) / 2;
+    int tail_count = shown - head;
 
-    char name[32];
-    if (_mesh->lookupRepeaterByHash(hop, _best_hash_size, name, sizeof(name)) == 1) {
-      a.put(name);
-      if (with_hex) {
-        a.put('[');
-        a.put(hex);
-        a.put(']');
-      }
-    } else {
-      a.put(hex);  // префикс неизвестен или неоднозначен
+    for (int k = 0; k < head; k++) {
+      int i = total - 1 - k;
+      putHopLine(a, _mesh, &_best_path[i * _best_hash_size], _best_hash_size, with_hex, true);
     }
-    a.put('\n');
+    if (elide > 0) {
+      a.put("...");
+      putLineBreak(a);
+    }
+    for (int k = tail_count; k > 0; k--) {
+      int i = k - 1;
+      putHopLine(a, _mesh, &_best_path[i * _best_hash_size], _best_hash_size, with_hex, true);
+    }
+  } else if (elide > 0 && total > 0) {
+    a.put("...");
+    putLineBreak(a);
   }
 
   putHopsTail(a, _best_hop_count);
@@ -409,9 +485,7 @@ int PingBot::renderNamed(char* out, int out_sz, bool with_hex) const {
 
 int PingBot::renderCompact(char* out, int out_sz, int elide) const {
   Appender a(out, out_sz);
-  a.put('@');
-  a.put(_sender);
-  a.put('\n');
+  putMention(a, _sender);
 
   int total = _best_hop_count;
   if (total > 0 && elide < total) {
@@ -421,11 +495,10 @@ int PingBot::renderCompact(char* out, int out_sz, int elide) const {
     bool first = true;
 
     for (int k = 0; k < head; k++) {
-      char hex[2 * 3 + 1];
-      toLowerHex(hex, &_best_path[(total - 1 - k) * _best_hash_size], _best_hash_size);
       if (!first) a.put(", ");
       first = false;
-      a.put(hex);
+      putHopLine(a, _mesh, &_best_path[(total - 1 - k) * _best_hash_size], _best_hash_size,
+                 false, false);
     }
     if (elide > 0) {
       if (!first) a.put(", ");
@@ -433,13 +506,11 @@ int PingBot::renderCompact(char* out, int out_sz, int elide) const {
       a.put("...");
     }
     for (int k = tail_count; k > 0; k--) {
-      char hex[2 * 3 + 1];
-      toLowerHex(hex, &_best_path[(k - 1) * _best_hash_size], _best_hash_size);
       if (!first) a.put(", ");
       first = false;
-      a.put(hex);
+      putHopLine(a, _mesh, &_best_path[(k - 1) * _best_hash_size], _best_hash_size, false, false);
     }
-    a.put('\n');
+    putLineBreak(a);
   }
 
   putHopsTail(a, (uint8_t)total);
