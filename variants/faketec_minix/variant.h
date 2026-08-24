@@ -98,6 +98,10 @@
 #define JOYSTICK_LEFT                      (21)   // encoder left
 #define JOYSTICK_RIGHT                     (18)  // encoder right
 #define PIN_USER_BTN                       (19)// encoder press
+// The rotary encoder has no DOWN contact, but ui-new expects all four buttons whenever
+// UI_HAS_JOYSTICK is set. D20 (P1.05) is unrouted here, so with a pull-up it reads as
+// permanently released and the handler never fires.
+#define JOYSTICK_DOWN                      (20)
 // #define PIN_USER_BTN                       PIN_BUTTON1
 
 ////////////////////////////////////////////////////////////////////////////////

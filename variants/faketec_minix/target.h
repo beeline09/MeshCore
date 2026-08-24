@@ -33,6 +33,7 @@ extern EnvironmentSensorManager sensors;
     extern MomentaryButton user_btn;
     extern MomentaryButton joystick_left;
     extern MomentaryButton joystick_right;
+    extern MomentaryButton joystick_down;
     extern MomentaryButton back_btn;
   #else
     extern MomentaryButton user_btn;

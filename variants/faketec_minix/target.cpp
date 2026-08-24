@@ -24,6 +24,7 @@ AutoDiscoverRTCClock rtc_clock(fallback_clock);
     MomentaryButton user_btn(PIN_USER_BTN, 1000, true, true);
     MomentaryButton joystick_left(JOYSTICK_LEFT, 1000, true, true);
     MomentaryButton joystick_right(JOYSTICK_RIGHT, 1000, true, true);
+    MomentaryButton joystick_down(JOYSTICK_DOWN, 1000, true, true);
     MomentaryButton back_btn(PIN_BACK_BTN, 1000, true, true, true);
   #else
     MomentaryButton user_btn(PIN_USER_BTN, 1000, true, true);

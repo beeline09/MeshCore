@@ -14,9 +14,11 @@ void PromicroBoard::begin() {
       pinMode(PIN_BACK_BTN, INPUT_PULLUP);
       pinMode(JOYSTICK_LEFT, INPUT_PULLUP);
       pinMode(JOYSTICK_RIGHT, INPUT_PULLUP);
+      pinMode(JOYSTICK_DOWN, INPUT_PULLUP);
       pinMode(PIN_USER_BTN, INPUT_PULLUP);
       joystick_left.begin();
       joystick_right.begin();
+      joystick_down.begin();
       user_btn.begin();
       back_btn.begin();
     #else if defined (BUTTON_PIN)
