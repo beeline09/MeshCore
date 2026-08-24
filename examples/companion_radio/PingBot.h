@@ -6,33 +6,50 @@
 #include <Mesh.h>
 #include <helpers/BaseChatMesh.h>
 
-/* ------------------------- role configuration ------------------------- */
+/* --------------------------- настройки роли --------------------------- */
 
 #ifndef PING_BOT_NAME
   #define PING_BOT_NAME "PingBot"
 #endif
 
-// hashtag group name, WITHOUT the leading '#'
+// имя хештег-группы, БЕЗ ведущего '#'
 #ifndef PING_BOT_GROUP
   #define PING_BOT_GROUP "ping"
 #endif
 
+// Слова-триггеры задаются В НИЖНЕМ РЕГИСТРЕ: входящий текст приводится к нижнему регистру
+// перед сравнением (ASCII и кириллица), поэтому писать можно как угодно — ping, PING, ПиНг.
+// Пустая строка "" отключает соответствующий вариант.
 #ifndef PING_BOT_TRIGGER
   #define PING_BOT_TRIGGER "ping"
 #endif
+#ifndef PING_BOT_TRIGGER_RU
+  #define PING_BOT_TRIGGER_RU "пинг"
+#endif
 
-// transport scope for replies, WITHOUT the leading '#'. "*" means no region at all,
-// i.e. plain un-scoped flood.
+// На "pong"/"понг" бот отвечает готовой фразой, без сбора маршрута
+#ifndef PING_BOT_PONG_TRIGGER
+  #define PING_BOT_PONG_TRIGGER "pong"
+#endif
+#ifndef PING_BOT_PONG_TRIGGER_RU
+  #define PING_BOT_PONG_TRIGGER_RU "понг"
+#endif
+#ifndef PING_BOT_PONG_REPLY
+  #define PING_BOT_PONG_REPLY "Ты мне ping, я тебе - pong)"
+#endif
+
+// регион (transport scope) для ответа, БЕЗ ведущего '#'. "*" означает отсутствие
+// региона, то есть обычный unscoped-флуд.
 #ifndef PING_BOT_REGION
   #define PING_BOT_REGION "*"
 #endif
 
-// full reply size, INCLUDING the "<node name>: " prefix that sendGroupMessage() prepends
+// полный размер ответа, ВКЛЮЧАЯ префикс "<имя ноды>: ", который подставляет sendGroupMessage()
 #ifndef PING_BOT_MAX_MSG_LEN
   #define PING_BOT_MAX_MSG_LEN 155
 #endif
 
-// how long to keep collecting duplicate copies of the same packet before replying
+// сколько собирать копии одного и того же пакета, пришедшие разными маршрутами, до ответа
 #ifndef PING_BOT_WINDOW_MS
   #define PING_BOT_WINDOW_MS 8000
 #endif
@@ -45,56 +62,58 @@
   #define PING_BOT_MAX_PER_HOUR 30
 #endif
 
-// how many senders can sit in cooldown at once; the oldest entry is evicted when full,
-// which lets that sender through early. ~36 bytes of RAM each.
+// сколько отправителей одновременно помнит кулдаун. При переполнении вытесняется самая
+// старая запись, и тот отправитель пройдёт раньше срока. Около 36 байт RAM на слот.
 #ifndef PING_BOT_COOLDOWN_SLOTS
   #define PING_BOT_COOLDOWN_SLOTS 32
 #endif
 
-/* --------------------- compile-time sanity checks --------------------- */
+/* --------------------- проверки на этапе компиляции -------------------- */
 
 #if PING_BOT_MAX_MSG_LEN > MAX_TEXT_LEN
-  #error "PING_BOT_MAX_MSG_LEN exceeds MAX_TEXT_LEN (160). sendGroupMessage() would silently truncate the reply and cut off the trailing '-N hops' line. Lower PING_BOT_MAX_MSG_LEN to 160 or less."
+  #error "PING_BOT_MAX_MSG_LEN больше MAX_TEXT_LEN (160). sendGroupMessage() молча обрежет ответ и срежет хвост '-N hops'. Уменьшите PING_BOT_MAX_MSG_LEN до 160 или меньше."
 #endif
 
 #if PING_BOT_MAX_MSG_LEN < 48
-  #error "PING_BOT_MAX_MSG_LEN is too small to hold even '@<sender>' plus '-N hops'. Use 48 or more."
+  #error "PING_BOT_MAX_MSG_LEN слишком мал: не вмещает даже '@<отправитель>' и '-N hops'. Укажите 48 или больше."
 #endif
 
 #if PING_BOT_WINDOW_MS < 1000 || PING_BOT_WINDOW_MS > 60000
-  #error "PING_BOT_WINDOW_MS must be between 1000 and 60000 ms."
+  #error "PING_BOT_WINDOW_MS должен быть от 1000 до 60000 мс."
 #endif
 
 #if PING_BOT_COOLDOWN_SEC < 0 || PING_BOT_COOLDOWN_SEC > 86400
-  #error "PING_BOT_COOLDOWN_SEC must be between 0 (no cooldown) and 86400 (a day)."
+  #error "PING_BOT_COOLDOWN_SEC должен быть от 0 (без кулдауна) до 86400 (сутки)."
 #endif
 
 #if PING_BOT_MAX_PER_HOUR < 1 || PING_BOT_MAX_PER_HOUR > 65535
-  #error "PING_BOT_MAX_PER_HOUR must be between 1 and 65535 (the counter is a uint16_t)."
+  #error "PING_BOT_MAX_PER_HOUR должен быть от 1 до 65535 (счётчик — uint16_t)."
 #endif
 
 #if PING_BOT_COOLDOWN_SLOTS < 1 || PING_BOT_COOLDOWN_SLOTS > 256
-  #error "PING_BOT_COOLDOWN_SLOTS must be between 1 and 256 (each slot costs ~36 bytes of RAM)."
+  #error "PING_BOT_COOLDOWN_SLOTS должен быть от 1 до 256 (каждый слот стоит около 36 байт RAM)."
 #endif
 
 static_assert(sizeof(PING_BOT_NAME) - 1 >= 1,
-              "PING_BOT_NAME must not be empty.");
+              "PING_BOT_NAME не может быть пустым.");
 static_assert(sizeof(PING_BOT_NAME) - 1 <= 31,
-              "PING_BOT_NAME must be 31 chars or less (NodePrefs::node_name is char[32]).");
+              "PING_BOT_NAME не длиннее 31 символа (NodePrefs::node_name — char[32]).");
 static_assert(sizeof(PING_BOT_GROUP) - 1 >= 1,
-              "PING_BOT_GROUP must not be empty.");
+              "PING_BOT_GROUP не может быть пустым.");
 static_assert(sizeof(PING_BOT_GROUP) - 1 <= 30,
-              "PING_BOT_GROUP must be 30 chars or less (channel name is char[32] and gets a '#' prefix).");
+              "PING_BOT_GROUP не длиннее 30 символов (имя канала — char[32] плюс префикс '#').");
 static_assert(PING_BOT_GROUP[0] != '#',
-              "PING_BOT_GROUP must be given WITHOUT the leading '#', it is added by the firmware.");
-static_assert(sizeof(PING_BOT_TRIGGER) - 1 >= 1,
-              "PING_BOT_TRIGGER must not be empty.");
+              "PING_BOT_GROUP задаётся БЕЗ ведущего '#', его добавляет прошивка.");
+static_assert(sizeof(PING_BOT_TRIGGER) - 1 >= 1 || sizeof(PING_BOT_TRIGGER_RU) - 1 >= 1,
+              "Хотя бы один из PING_BOT_TRIGGER / PING_BOT_TRIGGER_RU должен быть непустым.");
+static_assert(sizeof(PING_BOT_PONG_REPLY) - 1 <= PING_BOT_MAX_MSG_LEN - 3,
+              "PING_BOT_PONG_REPLY не влезает в PING_BOT_MAX_MSG_LEN вместе с префиксом имени ноды.");
 static_assert(sizeof(PING_BOT_REGION) - 1 >= 1,
-              "PING_BOT_REGION must not be empty. Use \"*\" for no region.");
+              "PING_BOT_REGION не может быть пустым. Для отсутствия региона укажите \"*\".");
 static_assert(sizeof(PING_BOT_REGION) - 1 <= 30,
-              "PING_BOT_REGION must be 30 chars or less (it gets a '#' prefix before hashing).");
+              "PING_BOT_REGION не длиннее 30 символов (перед хешированием добавляется префикс '#').");
 static_assert(PING_BOT_REGION[0] != '#',
-              "PING_BOT_REGION must be given WITHOUT the leading '#', it is added by the firmware.");
+              "PING_BOT_REGION задаётся БЕЗ ведущего '#', его добавляет прошивка.");
 
 /* ---------------------------------------------------------------------- */
 
@@ -103,13 +122,12 @@ static_assert(PING_BOT_REGION[0] != '#',
 class MyMesh;
 
 /**
- * Listens on a hashtag group and answers "ping" with the route the packet took to get here.
+ * Слушает хештег-группу и отвечает на "ping" маршрутом, которым пакет дошёл до этой ноды.
  *
- * Duplicate copies of a flood packet are deduplicated by Mesh::onRecvPacket() before the
- * channel handler sees them, and the packet hash does not cover 'path' — so the copy that
- * reaches onChannelText() is merely the first to arrive, not the one with fewest hops.
- * To find the shortest route we keep a collection window open and let onRawRx(), driven by
- * the pre-dedup logRx() hook, offer the remaining copies.
+ * Копии флудового пакета отсекаются в Mesh::onRecvPacket() ещё до обработчика канала, а хеш
+ * пакета не покрывает path — поэтому до onChannelText() доезжает просто первая по времени
+ * копия, а не самая короткая. Чтобы найти кратчайший маршрут, держим открытым окно сбора и
+ * добираем остальные копии через onRawRx(), который вызывается из хука logRx() до дедупликации.
  */
 class PingBot {
 public:
@@ -118,10 +136,10 @@ public:
   bool isEnabled() const { return _enabled; }
   uint8_t getChannelIdx() const { return _channel_idx; }
 
-  /** Returns true when the text was a ping trigger and the bot took ownership of it. */
+  /** true, если текст оказался триггером и бот забрал его себе. */
   bool onChannelText(uint8_t channel_idx, const mesh::Packet* pkt, const char* text);
 
-  /** Fed from logRx(), i.e. every received packet, before deduplication. */
+  /** Вызывается из logRx(), то есть на каждый принятый пакет, до дедупликации. */
   void onRawRx(const mesh::Packet* pkt);
 
   void loop();
@@ -131,6 +149,10 @@ private:
   void noteReply(const char* sender);
   void captureCandidate(const mesh::Packet* pkt);
   void sendReply();
+  void sendPongReply(const char* sender);
+
+  /** Сколько байт остаётся под текст после префикса "<имя ноды>: ". */
+  int availableTextLen() const;
 
   int renderNamed(char* out, int out_sz, bool with_hex) const;
   int renderCompact(char* out, int out_sz, int elide) const;

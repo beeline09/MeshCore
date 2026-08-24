@@ -55,7 +55,7 @@ void PromicroBoard::onBeforeTransmit() {
 
 void PromicroBoard::onAfterTransmit() {
     _txing = false;
-    // a short packet would otherwise flash too briefly to notice
+    // короткий пакет иначе мигнёт слишком быстро, чтобы это заметить
     _led_off_at = millis() + STATUS_LED_TX_MILLIS;
 }
 
@@ -63,7 +63,7 @@ void PromicroBoard::onLoRaPacketReceived() {
     if (_txing) return;
 
     uint32_t until = millis() + STATUS_LED_RX_MILLIS;
-    if (_led_on && (int32_t)(until - _led_off_at) <= 0) return;  // don't shorten a longer pulse
+    if (_led_on && (int32_t)(until - _led_off_at) <= 0) return;  // не укорачивать более длинный импульс
 
     _led_off_at = until;
     setLed(true);

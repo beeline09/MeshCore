@@ -7,9 +7,9 @@
 #include <helpers/radiolib/CustomSX1262Wrapper.h>
 #include <helpers/AutoDiscoverRTCClock.h>
 
-// Swap in the wrapper that reports receive events to the board's status LED. Done here
-// rather than via build_flags because PlatformIO emits -U after all -D, so the macro
-// cannot be re-pointed from platformio.ini.
+// Подменяем обёртку на ту, что сообщает о приёме светодиоду платы. Делается здесь, а не
+// через build_flags: PlatformIO выводит -U после всех -D, поэтому переопределить макрос
+// из platformio.ini невозможно.
 #ifdef STATUS_LED_LORA_ACTIVITY
   #include <FaketecSX1262Wrapper.h>
   #undef WRAPPER_CLASS

@@ -238,7 +238,7 @@ public:
 #endif
 
 #ifdef WITH_PING_BOT
-  /** Number of repeater contacts whose pub_key starts with 'hash'; name is copied when unique. */
+  /** Сколько контактов-репитеров начинается с 'hash'; имя копируется, только если совпадение одно. */
   int lookupRepeaterByHash(const uint8_t* hash, uint8_t hash_len, char* out_name, size_t out_sz);
   bool sendPingBotReply(uint8_t channel_idx, const char* text);
 #endif

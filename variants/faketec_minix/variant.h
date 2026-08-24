@@ -41,9 +41,9 @@
 
 #define PIN_BUZZER           (0)    // (T2)
 
-// T3 carries both the vibration motor and the status LED. With STATUS_LED_LORA_ACTIVITY the
-// LED shows radio traffic and owns the pin outright, so vibration is left undeclared —
-// otherwise it would hold the pin high for seconds on every UI event.
+// На T3 сидят и вибромотор, и светодиод. При STATUS_LED_LORA_ACTIVITY светодиод показывает
+// трафик радио и владеет пином единолично, поэтому вибро не объявляем: иначе оно держало бы
+// пин поднятым по несколько секунд на каждое UI-событие.
 #ifndef STATUS_LED_LORA_ACTIVITY
   #define PIN_VIBRATION      (1)   // (T3)
 #endif
@@ -82,8 +82,8 @@
 #define LED_BUILTIN          PIN_LED
 #define LED_STATE_ON         1
 
-// PIN_STATUS_LED is what the companion UI blinks on its own 4-second heartbeat timer.
-// Leaving it undeclared hands the LED to PromicroBoard, which drives it from LoRa traffic.
+// PIN_STATUS_LED — это то, чем companion-UI мигает по собственному таймеру с циклом 4 секунды.
+// Если его не объявлять, светодиод достаётся PromicroBoard, который ведёт его от трафика LoRa.
 #ifndef STATUS_LED_LORA_ACTIVITY
   #define PIN_STATUS_LED    PIN_LED
 #endif
@@ -98,9 +98,9 @@
 #define JOYSTICK_LEFT                      (21)   // encoder left
 #define JOYSTICK_RIGHT                     (18)  // encoder right
 #define PIN_USER_BTN                       (19)// encoder press
-// The rotary encoder has no DOWN contact, but ui-new expects all four buttons whenever
-// UI_HAS_JOYSTICK is set. D20 (P1.05) is unrouted here, so with a pull-up it reads as
-// permanently released and the handler never fires.
+// У энкодера нет контакта DOWN, но ui-new при UI_HAS_JOYSTICK ждёт все четыре кнопки.
+// D20 (P1.05) здесь не разведён, поэтому с подтяжкой он всегда читается как отпущенный
+// и обработчик никогда не срабатывает.
 #define JOYSTICK_DOWN                      (20)
 // #define PIN_USER_BTN                       PIN_BUTTON1
 

@@ -21,7 +21,7 @@
 #define  ADC_MULTIPLIER   (1.815f) // dependent on voltage divider resistors. TODO: more accurate battery tracking
 
 #ifdef STATUS_LED_LORA_ACTIVITY
-  // how long the LED stays lit after a packet is heard / after a transmission ends
+  // сколько светодиод горит после принятого пакета и после окончания передачи
   #ifndef STATUS_LED_RX_MILLIS
     #define STATUS_LED_RX_MILLIS 60
   #endif
@@ -48,8 +48,8 @@ public:
   void begin();
 
 #ifdef STATUS_LED_LORA_ACTIVITY
-  // Dark while idle, short flash per received packet, lit for the whole transmission.
-  // Fed by FaketecSX1262Wrapper (receive) and by the radio layer itself (transmit).
+  // В покое погашен, короткая вспышка на принятый пакет, горит всю передачу.
+  // Приём приходит из FaketecSX1262Wrapper, передача — из самого слоя радио.
   void onBeforeTransmit() override;
   void onAfterTransmit() override;
   void onLoRaPacketReceived();

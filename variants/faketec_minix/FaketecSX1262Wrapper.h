@@ -4,8 +4,8 @@
 #include "PromicroBoard.h"
 
 /**
- * Feeds receive events to the board so the status LED can show LoRa traffic.
- * Transmit is already covered by MainBoard::onBeforeTransmit()/onAfterTransmit().
+ * Прокидывает события приёма в класс платы, чтобы светодиод показывал трафик LoRa.
+ * Передача уже покрыта хуками MainBoard::onBeforeTransmit()/onAfterTransmit().
  */
 class FaketecSX1262Wrapper : public CustomSX1262Wrapper {
   PromicroBoard& _pb;
@@ -25,7 +25,7 @@ public:
   void loop() override {
     RadioLibWrapper::loop();
 #ifdef STATUS_LED_LORA_ACTIVITY
-    _pb.updateStatusLed();   // expires the pulse; this runs on every dispatcher iteration
+    _pb.updateStatusLed();   // гасит импульс; вызывается на каждой итерации диспетчера
 #endif
   }
 };
