@@ -43,6 +43,16 @@ struct Appender {
   }
 };
 
+void putHopsTail(Appender& a, uint8_t hop_count) {
+  if (hop_count == 0) {   // heard the sender directly, no repeater in between
+    a.put("-0 hops - Direct");
+    return;
+  }
+  char tail[24];
+  snprintf(tail, sizeof(tail), "-%u hops", (unsigned)hop_count);
+  a.put(tail);
+}
+
 } // namespace
 
 void PingBot::begin(MyMesh* mesh, uint8_t channel_idx) {
@@ -217,9 +227,7 @@ int PingBot::renderNamed(char* out, int out_sz, bool with_hex) const {
     a.put('\n');
   }
 
-  char tail[24];
-  snprintf(tail, sizeof(tail), "-%u hops", (unsigned)_best_hop_count);
-  a.put(tail);
+  putHopsTail(a, _best_hop_count);
   return a.needed;
 }
 
@@ -258,9 +266,7 @@ int PingBot::renderCompact(char* out, int out_sz, int elide) const {
     a.put('\n');
   }
 
-  char tail[24];
-  snprintf(tail, sizeof(tail), "-%u hops", (unsigned)total);
-  a.put(tail);
+  putHopsTail(a, (uint8_t)total);
   return a.needed;
 }
 
