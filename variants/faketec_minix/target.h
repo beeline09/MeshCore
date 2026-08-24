@@ -6,6 +6,15 @@
 #include <PromicroBoard.h>
 #include <helpers/radiolib/CustomSX1262Wrapper.h>
 #include <helpers/AutoDiscoverRTCClock.h>
+
+// Swap in the wrapper that reports receive events to the board's status LED. Done here
+// rather than via build_flags because PlatformIO emits -U after all -D, so the macro
+// cannot be re-pointed from platformio.ini.
+#ifdef STATUS_LED_LORA_ACTIVITY
+  #include <FaketecSX1262Wrapper.h>
+  #undef WRAPPER_CLASS
+  #define WRAPPER_CLASS FaketecSX1262Wrapper
+#endif
 #ifdef DISPLAY_CLASS
   #include <helpers/ui/SSD1306Display.h>
   #include <helpers/ui/MomentaryButton.h>

@@ -40,7 +40,13 @@
 #define PIN_GPS_EN           (5)
 
 #define PIN_BUZZER           (0)    // (T2)
-#define PIN_VIBRATION        (1)   // (T3)
+
+// T3 carries both the vibration motor and the status LED. With STATUS_LED_LORA_ACTIVITY the
+// LED shows radio traffic and owns the pin outright, so vibration is left undeclared —
+// otherwise it would hold the pin high for seconds on every UI event.
+#ifndef STATUS_LED_LORA_ACTIVITY
+  #define PIN_VIBRATION      (1)   // (T3)
+#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 // I2C pin definition
@@ -75,7 +81,12 @@
 #define LED_GREEN           LED_BLUE
 #define LED_BUILTIN          PIN_LED
 #define LED_STATE_ON         1
-#define PIN_STATUS_LED      PIN_LED
+
+// PIN_STATUS_LED is what the companion UI blinks on its own 4-second heartbeat timer.
+// Leaving it undeclared hands the LED to PromicroBoard, which drives it from LoRa traffic.
+#ifndef STATUS_LED_LORA_ACTIVITY
+  #define PIN_STATUS_LED    PIN_LED
+#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 // Builtin buttons
@@ -92,4 +103,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 // Buzzer & Vibro
 #define PIN_BUZZER                         (0)
-#define PIN_VIBRATION                      (1)
+#ifndef STATUS_LED_LORA_ACTIVITY
+  #define PIN_VIBRATION                    (1)
+#endif

@@ -20,14 +20,41 @@
 #define  PIN_VBAT_READ 17
 #define  ADC_MULTIPLIER   (1.815f) // dependent on voltage divider resistors. TODO: more accurate battery tracking
 
+#ifdef STATUS_LED_LORA_ACTIVITY
+  // how long the LED stays lit after a packet is heard / after a transmission ends
+  #ifndef STATUS_LED_RX_MILLIS
+    #define STATUS_LED_RX_MILLIS 60
+  #endif
+  #ifndef STATUS_LED_TX_MILLIS
+    #define STATUS_LED_TX_MILLIS 250
+  #endif
+#endif
+
 class PromicroBoard : public NRF52BoardDCDC {
 protected:
   uint8_t btn_prev_state;
   float adc_mult = ADC_MULTIPLIER;
 
+#ifdef STATUS_LED_LORA_ACTIVITY
+  bool     _led_on = false;
+  bool     _txing = false;
+  uint32_t _led_off_at = 0;
+
+  void setLed(bool on);
+#endif
+
 public:
   PromicroBoard() : NRF52Board("ProMicro_OTA") {}
   void begin();
+
+#ifdef STATUS_LED_LORA_ACTIVITY
+  // Dark while idle, short flash per received packet, lit for the whole transmission.
+  // Fed by FaketecSX1262Wrapper (receive) and by the radio layer itself (transmit).
+  void onBeforeTransmit() override;
+  void onAfterTransmit() override;
+  void onLoRaPacketReceived();
+  void updateStatusLed();
+#endif
 
   #define BATTERY_SAMPLES 8
 
