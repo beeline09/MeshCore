@@ -101,6 +101,27 @@ Dom-2[998a]
 Регион — те же `sha256("#name")` через `TransportKeyStore::getAutoKeyFor()`, как
 `DEFAULT_FLOOD_SCOPE_NAME`.
 
+## Где что лежит: граница с upstream
+
+Общее правило репозитория — не трогать `src/` и `examples/`, всё своё держать в
+`variants/<board>/` (см. `AGENTS.md`). Для ping-бота сделано **осознанное исключение**,
+согласованное с владельцем: логика роли живёт на уровне меша, а не железа, и через хуки
+платы недостижима. Расшифрованный текст группы есть только в `onChannelMessageRecv()`,
+сбор маршрутов до дедупликации — в `logRx()`, а отправка ответа требует
+`sendGroupMessage()`, базы контактов и реестра каналов — это защищённые члены меша.
+
+След в upstream-файлах сведён к минимуму и **не должен расти**:
+
+- `MyMesh.cpp` — только 4 точки подключения под `#ifdef WITH_PING_BOT` (вызов бота в
+  `onChannelMessageRecv()`, имя по умолчанию, `initPingBot()` в `begin()`, `loop()`).
+- `MyMesh.h` — объявления членов и методов роли, тоже под `#ifdef`.
+- Тела `MyMesh::initPingBot/logRx/lookupRepeaterByHash/sendPingBotReply` лежат
+  **в `PingBot.cpp`**, а не в `MyMesh.cpp`. Новую логику роли добавлять туда же.
+- Биты `autoadd_config` объявлены локально в `MyMesh.cpp`, поэтому в `PingBot.cpp`
+  продублированы как `PB_AUTO_ADD_*`. Если upstream поменяет значения — синхронизировать.
+
+При выключенном `WITH_PING_BOT` оба файла идентичны upstream.
+
 ## Структура
 
 Роль живёт внутри `examples/companion_radio` под `#ifdef WITH_PING_BOT`
