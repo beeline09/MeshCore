@@ -88,6 +88,10 @@
 #define TERMINAL_CLI_PSK  "VGVybWluYWxDTEkxMjM0NQ=="  // "TerminalCLI12345" — exactly 16 bytes
 #endif
 
+#ifdef WITH_PING_BOT
+#include "PingBot.h"
+#endif
+
 /* -------------------------------------------------------------------------------------- */
 
 #define REQ_TYPE_GET_STATUS             0x01 // same as _GET_STATS
@@ -152,6 +156,9 @@ protected:
   void sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis=0) override;
 
   void logRxRaw(float snr, float rssi, const uint8_t raw[], int len) override;
+#ifdef WITH_PING_BOT
+  void logRx(mesh::Packet* packet, int len, float score) override;
+#endif
   bool isAutoAddEnabled() const override;
   bool shouldAutoAddContactType(uint8_t type) const override;
   bool shouldOverwriteWhenFull() const override;
@@ -228,6 +235,12 @@ public:
     _ts_from_messages = (m == 0);
   }
 
+#endif
+
+#ifdef WITH_PING_BOT
+  /** Number of repeater contacts whose pub_key starts with 'hash'; name is copied when unique. */
+  int lookupRepeaterByHash(const uint8_t* hash, uint8_t hash_len, char* out_name, size_t out_sz);
+  bool sendPingBotReply(uint8_t channel_idx, const char* text);
 #endif
 
   bool isCyr2LatChannelsEnabled() const { return _cyr2lat_channels_enabled; }
@@ -376,6 +389,13 @@ private:
   void injectChannelMsg(uint8_t ch_idx, const char* sender_name, uint8_t path_len, int8_t snr_x4, uint32_t ts, const char* text);
   int  findTerminalCLIChannelIdx();
   bool handleCliCmd(uint32_t sender_ts, const char* cmd, char* buf, bool is_remote);
+#endif
+
+#ifdef WITH_PING_BOT
+  PingBot      _ping_bot;
+  TransportKey _ping_bot_scope;
+
+  void initPingBot();
 #endif
 
 #ifdef WITH_WIFI_SWITCHING

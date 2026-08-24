@@ -672,6 +672,9 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
     ChannelDetails ch;
     if (getChannel(channel_idx, ch) && strcmp(ch.name, "TerminalCLI") == 0) return;
   }
+#ifdef WITH_PING_BOT
+  _ping_bot.onChannelText(channel_idx, pkt, text);
+#endif
   out_frame[i++] = channel_idx;
   uint8_t path_len = out_frame[i++] = pkt->isRouteFlood() ? pkt->getPathHashCount() : 0xFF;
 
@@ -1057,6 +1060,8 @@ void MyMesh::begin(bool has_display) {
 // if name is provided as a build flag, use that as default node name instead
 #ifdef ADVERT_NAME
   strcpy(_prefs.node_name, ADVERT_NAME);
+#elif defined(WITH_PING_BOT)
+  strcpy(_prefs.node_name, PING_BOT_NAME);
 #else
   // use hex of first 4 bytes of identity public key as default node name
   char pub_key_hex[10];
@@ -1164,7 +1169,103 @@ void MyMesh::begin(bool has_display) {
     }
   }
 #endif
+
+#ifdef WITH_PING_BOT
+  initPingBot();
+#endif
 }
+
+#ifdef WITH_PING_BOT
+
+void MyMesh::initPingBot() {
+  // a hashtag channel's key is the first 16 bytes of sha256("#name")
+  ChannelDetails ch;
+  memset(&ch, 0, sizeof(ch));
+  strcpy(ch.name, PING_BOT_CHANNEL_NAME);
+  mesh::Utils::sha256(ch.channel.secret, 16, (const uint8_t *)PING_BOT_CHANNEL_NAME,
+                      strlen(PING_BOT_CHANNEL_NAME));
+
+  int idx = -1;
+  int free_idx = -1;
+  for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
+    ChannelDetails existing;
+    if (!getChannel(i, existing)) continue;
+    if (existing.name[0] == 0) {
+      if (free_idx < 0) free_idx = i;
+    } else if (strcmp(existing.name, PING_BOT_CHANNEL_NAME) == 0) {
+      idx = i;
+      break;
+    }
+  }
+  if (idx < 0 && free_idx >= 0 && setChannel(free_idx, ch)) {
+    idx = free_idx;
+    saveChannels();
+    MESH_DEBUG_PRINTLN("PingBot: registered channel %s at slot %d", PING_BOT_CHANNEL_NAME, idx);
+  }
+  if (idx < 0) {
+    MESH_DEBUG_PRINTLN("PingBot: ERROR — no free channel slot for %s", PING_BOT_CHANNEL_NAME);
+    return;
+  }
+
+  // only repeaters end up in the reply, so don't spend contact slots on anything else
+  _prefs.manual_add_contacts = 1;
+  _prefs.autoadd_config = AUTO_ADD_REPEATER | AUTO_ADD_OVERWRITE_OLDEST;
+
+#ifdef PING_BOT_REGION
+  {
+    TransportKeyStore temp;
+    temp.getAutoKeyFor(0, "#" PING_BOT_REGION, _ping_bot_scope);
+  }
+#endif
+
+  _ping_bot.begin(this, (uint8_t)idx);
+}
+
+void MyMesh::logRx(mesh::Packet *packet, int len, float score) {
+  // called for every parsed packet BEFORE dedup, so the bot can see copies that took other routes
+  _ping_bot.onRawRx(packet);
+}
+
+int MyMesh::lookupRepeaterByHash(const uint8_t *hash, uint8_t hash_len, char *out_name,
+                                 size_t out_sz) {
+  int matches = 0;
+  int total = getNumContacts();
+  for (int i = 0; i < total; i++) {
+    ContactInfo contact;
+    if (!getContactByIdx(i, contact)) continue;
+    if (contact.type != ADV_TYPE_REPEATER) continue;
+    if (memcmp(contact.id.pub_key, hash, hash_len) != 0) continue;
+
+    if (++matches == 1) {
+      strncpy(out_name, contact.name, out_sz - 1);
+      out_name[out_sz - 1] = 0;
+    } else {
+      return matches;  // ambiguous, caller falls back to hex
+    }
+  }
+  return matches;
+}
+
+bool MyMesh::sendPingBotReply(uint8_t channel_idx, const char *text) {
+  ChannelDetails ch;
+  if (!getChannel(channel_idx, ch)) return false;
+
+  TransportKey saved_scope = send_scope;
+  bool saved_unscoped = send_unscoped;
+#ifdef PING_BOT_REGION
+  send_scope = _ping_bot_scope;
+  send_unscoped = false;
+#endif
+
+  bool ok = sendGroupMessage(getRTCClock()->getCurrentTime(), ch.channel, _prefs.node_name, text,
+                             strlen(text));
+
+  send_scope = saved_scope;
+  send_unscoped = saved_unscoped;
+  return ok;
+}
+
+#endif
 
 const char *MyMesh::getNodeName() {
   return _prefs.node_name;
@@ -2479,6 +2580,10 @@ void MyMesh::checkSerialInterface() {
 
 void MyMesh::loop() {
   BaseChatMesh::loop();
+
+#ifdef WITH_PING_BOT
+  _ping_bot.loop();
+#endif
 
   if (_pending_reboot_at && millisHasNowPassed(_pending_reboot_at)) {
 #ifdef NRF52_PLATFORM

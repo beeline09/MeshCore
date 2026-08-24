@@ -22,3 +22,4 @@
 | [companion-clock-oled.md](companion-clock-oled.md) | `examples/companion_radio/ui-new/UITask.cpp` | Страница CLOCK на OLED (size-3 шрифт), PM inline, настройки PM CLOK и CLOK DIM |
 | [display-tz.md](display-tz.md) | `variants/*/target.h`, `UITask.cpp` | POSIX часовой пояс для страницы CLOCK; дефолт UTC0 во всех вариантах с дисплеем |
 | [companion-t114-clock.md](companion-t114-clock.md) | `examples/companion_radio/ui-new/UITask.cpp`, `src/helpers/ui/ST7789Display.*` | Heltec T114 CLOCK page: V3-compatible scaled clock font, centered date/source, persisted PM CLOCK and CLOCK DIM settings |
+| [ping-bot.md](ping-bot.md) | `examples/companion_radio/PingBot.*`, `variants/faketec_minix/` | Роль `ping_bot`: ответ маршрутом (хопы + имена репитеров) на «ping» в хештег-группе |

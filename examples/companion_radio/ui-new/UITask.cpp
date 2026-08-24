@@ -1532,7 +1532,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   joystick_left.begin();
   joystick_right.begin();
   back_btn.begin();
+#if UI_HAS_JOYSTICK_DOWN
   joystick_down.begin();
+#endif
 #endif
 #if defined(PIN_USER_BTN_ANA)
   analog_btn.begin();
@@ -1848,11 +1850,13 @@ void UITask::loop() {
   if (ev == BUTTON_EVENT_CLICK) {
     c = checkDisplayOn(KEY_UP);
   }
+#if UI_HAS_JOYSTICK_DOWN
   // DOWN (D17 = P0.31): navigate down / next item
   ev = joystick_down.check();
   if (ev == BUTTON_EVENT_CLICK) {
     c = checkDisplayOn(KEY_DOWN);
   }
+#endif
 #elif defined(PIN_USER_BTN)
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
