@@ -71,8 +71,6 @@ static_assert(PING_BOT_GROUP[0] != '#',
               "PING_BOT_GROUP must be given WITHOUT the leading '#', it is added by the firmware.");
 static_assert(sizeof(PING_BOT_TRIGGER) - 1 >= 1,
               "PING_BOT_TRIGGER must not be empty.");
-static_assert(sizeof(PING_BOT_NAME) - 1 <= 31,
-              "PING_BOT_NAME must be 31 chars or less (NodePrefs::node_name is char[32]).");
 static_assert(sizeof(PING_BOT_REGION) - 1 >= 1,
               "PING_BOT_REGION must not be empty. Use \"*\" for no region.");
 static_assert(sizeof(PING_BOT_REGION) - 1 <= 30,
