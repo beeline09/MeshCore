@@ -60,7 +60,7 @@ Dom-2[998a]
 | `WITH_PING_BOT` | включает роль | — |
 | `PING_BOT_NAME` | имя ноды при первом старте | `"PingBot"` |
 | `PING_BOT_GROUP` | имя хештег-группы **без** `#` | `"ping"` |
-| `PING_BOT_REGION` | регион (transport scope) для ответа | не задан = unscoped |
+| `PING_BOT_REGION` | регион (transport scope) для ответа, **без** `#`; `"*"` = без региона | `"*"` |
 | `PING_BOT_MAX_MSG_LEN` | полный лимит сообщения | `155` |
 | `PING_BOT_TRIGGER` | слово-триггер | `"ping"` |
 | `PING_BOT_WINDOW_MS` | окно сбора маршрутов | `8000` |

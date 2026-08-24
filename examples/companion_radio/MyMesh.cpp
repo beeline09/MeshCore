@@ -1211,12 +1211,12 @@ void MyMesh::initPingBot() {
   _prefs.manual_add_contacts = 1;
   _prefs.autoadd_config = AUTO_ADD_REPEATER | AUTO_ADD_OVERWRITE_OLDEST;
 
-#ifdef PING_BOT_REGION
-  {
+  // "*" means no region: replies go out as plain un-scoped flood
+  memset(&_ping_bot_scope, 0, sizeof(_ping_bot_scope));
+  if (strcmp(PING_BOT_REGION, "*") != 0) {
     TransportKeyStore temp;
     temp.getAutoKeyFor(0, "#" PING_BOT_REGION, _ping_bot_scope);
   }
-#endif
 
   _ping_bot.begin(this, (uint8_t)idx);
 }
@@ -1252,10 +1252,9 @@ bool MyMesh::sendPingBotReply(uint8_t channel_idx, const char *text) {
 
   TransportKey saved_scope = send_scope;
   bool saved_unscoped = send_unscoped;
-#ifdef PING_BOT_REGION
+
   send_scope = _ping_bot_scope;
-  send_unscoped = false;
-#endif
+  send_unscoped = _ping_bot_scope.isNull();  // no region configured: don't fall back to default scope
 
   bool ok = sendGroupMessage(getRTCClock()->getCurrentTime(), ch.channel, _prefs.node_name, text,
                              strlen(text));

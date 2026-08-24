@@ -21,6 +21,12 @@
   #define PING_BOT_TRIGGER "ping"
 #endif
 
+// transport scope for replies, WITHOUT the leading '#'. "*" means no region at all,
+// i.e. plain un-scoped flood.
+#ifndef PING_BOT_REGION
+  #define PING_BOT_REGION "*"
+#endif
+
 // full reply size, INCLUDING the "<node name>: " prefix that sendGroupMessage() prepends
 #ifndef PING_BOT_MAX_MSG_LEN
   #define PING_BOT_MAX_MSG_LEN 155
@@ -65,6 +71,12 @@ static_assert(PING_BOT_GROUP[0] != '#',
               "PING_BOT_GROUP must be given WITHOUT the leading '#', it is added by the firmware.");
 static_assert(sizeof(PING_BOT_TRIGGER) - 1 >= 1,
               "PING_BOT_TRIGGER must not be empty.");
+static_assert(sizeof(PING_BOT_REGION) - 1 >= 1,
+              "PING_BOT_REGION must not be empty. Use \"*\" for no region.");
+static_assert(sizeof(PING_BOT_REGION) - 1 <= 30,
+              "PING_BOT_REGION must be 30 chars or less (it gets a '#' prefix before hashing).");
+static_assert(PING_BOT_REGION[0] != '#',
+              "PING_BOT_REGION must be given WITHOUT the leading '#', it is added by the firmware.");
 
 /* ---------------------------------------------------------------------- */
 

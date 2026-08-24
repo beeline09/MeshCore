@@ -393,7 +393,7 @@ private:
 
 #ifdef WITH_PING_BOT
   PingBot      _ping_bot;
-  TransportKey _ping_bot_scope;
+  TransportKey _ping_bot_scope = {};
 
   void initPingBot();
 #endif
