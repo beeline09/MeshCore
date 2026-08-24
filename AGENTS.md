@@ -4,6 +4,16 @@
 
 - Always communicate with the repository owner in **Russian**, even when they write in English. Do not switch to another language unless they explicitly ask for it in a given request.
 
+## Design principles (hard rules)
+
+- **Не лезть в core и не ломать существующую логику.** Всё новое живёт в своих файлах
+  и под своими `#ifdef`. Правки в `src/` и в общих файлах — только когда без них
+  физически не собрать, и минимальные.
+- **Настройки ноды принадлежат пользователю.** Дефайн сборки может задать *начальное*
+  значение при первом старте (как `ADVERT_NAME`), но не имеет права перезаписывать то,
+  что уже сохранено в `NodePrefs` и настроено через приложение/CLI. Никаких
+  «принудительно применить дефайн на каждом boot».
+
 ## Cursor Cloud specific instructions
 
 This repo is the **MeshCore `south_edition` firmware** — embedded C++ built with **PlatformIO** (Arduino framework). There are **no servers, databases, or long-running services**; the product is firmware binaries flashed onto LoRa radio boards. "Running the app" without physical hardware means (a) running the native host unit tests and (b) compiling a firmware target into a `.bin`/`.uf2`.
