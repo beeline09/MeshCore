@@ -34,6 +34,7 @@ bool DarktecDisplay::begin() {
             && i2c_probe(Wire, DISPLAY_ADDRESS);
   if (ok) {
     display.setFont(&glcdfont6x8);
+    display.setTextWrap(false);
   }
   return ok;
 }
@@ -89,6 +90,7 @@ void DarktecDisplay::startFrame(ColorVal bkg) {
   display.clearDisplay();
   _color = SSD1306_WHITE;
   display.setFont(&glcdfont6x8);
+  display.setTextWrap(false);
   display.setTextColor(_color);
   _font_size = 1;
   display.setTextSize(1);
@@ -115,36 +117,45 @@ void DarktecDisplay::print(const char* str) {
 }
 
 void DarktecDisplay::printWordWrap(const char* str, int max_width) {
+  display.setTextWrap(false);
   const int char_w = 6 * _font_size;
   const int line_h = 8 * _font_size;
-  const int max_chars = char_w > 0 ? max_width / char_w : 0;
+  int max_chars = char_w > 0 ? max_width / char_w : 0;
   if (max_chars <= 0) {
     print(str);
     return;
   }
+  if (max_chars * char_w > max_width) max_chars--;
 
   int len = (int)strlen(str);
   int pos = 0;
-  char line_buf[64];
+  char line_buf[48];
 
   while (pos < len && _cursor_y_raw + line_h <= height()) {
-    if (len - pos <= max_chars) {
-      print(str + pos);
-      break;
-    }
-    int break_at = pos + max_chars;
-    for (int i = pos + max_chars; i > pos; i--) {
-      if (str[i] == ' ') { break_at = i; break; }
+    int remaining = len - pos;
+    int take = remaining < max_chars ? remaining : max_chars;
+    int break_at = pos + take;
+    if (remaining > max_chars) {
+      for (int i = pos + take; i > pos; i--) {
+        if (str[i] == ' ') { break_at = i; break; }
+      }
     }
     int seg_len = break_at - pos;
+    if (seg_len < 1) {
+      seg_len = take;
+      break_at = pos + take;
+    }
     if (seg_len > (int)sizeof(line_buf) - 1) seg_len = (int)sizeof(line_buf) - 1;
     memcpy(line_buf, str + pos, seg_len);
     line_buf[seg_len] = 0;
     print(line_buf);
 
-    pos = break_at + (str[break_at] == ' ' ? 1 : 0);
-    _cursor_y_raw += line_h;
-    if (_cursor_y_raw + line_h <= height()) setCursor(0, _cursor_y_raw);
+    pos = break_at;
+    if (pos < len && str[pos] == ' ') pos++;
+    if (pos < len) {
+      _cursor_y_raw += line_h;
+      if (_cursor_y_raw + line_h <= height()) setCursor(0, _cursor_y_raw);
+    }
   }
 }
 
@@ -172,45 +183,45 @@ uint16_t DarktecDisplay::getTextWidth(const char* str) {
 
 void DarktecDisplay::translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size) {
   size_t j = 0;
-  char lead = 0;
-  char cc = 0;
   for (size_t i = 0; src[i] != 0 && j < dest_size - 1; i++) {
     unsigned char c = (unsigned char)src[i];
     if (c >= 32 && c <= 126) {
-      lead = 0;
       dest[j++] = (char)c;
-    } else if (c == 0xC2 || c == 0xC3 || c == 0xD0 || c == 0xD1 || c == 0xD2) {
-      lead = (char)c;
-      cc = 0;
-      c = (unsigned char)src[++i];
-      if (c != 0) {
-        switch (lead) {
-          case 0xC3: cc = (char)(c | 0xC0); break;
-          case 0xD0:
-            if      (c == 129) cc = 168;
-            else if (c == 132) cc = 170;
-            else if (c == 134) cc = 178;
-            else if (c == 135) cc = 175;
-            else if (c > 143 && c < 192) cc = (char)(c + 48);
-            break;
-          case 0xD1:
-            if      (c == 145) cc = 184;
-            else if (c == 148) cc = 186;
-            else if (c == 150) cc = 179;
-            else if (c == 151) cc = 191;
-            else if (c > 127 && c < 144) cc = (char)(c + 112);
-            break;
-          case 0xD2:
-            if      (c == 144) cc = 165;
-            else if (c == 145) cc = 180;
-            break;
-        }
-        dest[j++] = (cc != 0) ? cc : '\xAE';
+      continue;
+    }
+    if (c == 0xC2 || c == 0xC3 || c == 0xD0 || c == 0xD1 || c == 0xD2) {
+      unsigned char n = (unsigned char)src[i + 1];
+      if (n == 0) break;  // truncated sequence — drop the lead byte
+      i++;
+      char cc = 0;
+      switch (c) {
+        case 0xC2: cc = (char)n; break;
+        case 0xC3: cc = (char)(n | 0xC0); break;
+        case 0xD0:
+          if      (n == 129) cc = 168;
+          else if (n == 132) cc = 170;
+          else if (n == 134) cc = 178;
+          else if (n == 135) cc = 175;
+          else if (n > 143 && n < 192) cc = (char)(n + 48);
+          break;
+        case 0xD1:
+          if      (n == 145) cc = 184;
+          else if (n == 148) cc = 186;
+          else if (n == 150) cc = 179;
+          else if (n == 151) cc = 191;
+          else if (n > 127 && n < 144) cc = (char)(n + 112);
+          break;
+        case 0xD2:
+          if      (n == 144) cc = 165;
+          else if (n == 145) cc = 180;
+          break;
       }
-    } else if (c >= 0x80) {
-      lead = 0;
-      dest[j++] = '\xAE';
-      while (src[i+1] && (src[i+1] & 0xC0) == 0x80)
+      dest[j++] = (cc != 0) ? cc : '?';
+      continue;
+    }
+    if (c >= 0x80) {
+      dest[j++] = '?';
+      while (src[i + 1] && (((unsigned char)src[i + 1]) & 0xC0) == 0x80)
         i++;
     }
   }
