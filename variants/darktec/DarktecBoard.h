@@ -6,8 +6,10 @@
 #include <Adafruit_INA3221.h>
 
 #define PIN_VBAT_READ 17
-// Battery divider 100k / 100k (nominal 2.0). Calibrated with a multimeter.
+// Battery divider 100k / 100k. Default ADC_MULTIPLIER is in variant.h (1.750f).
+#ifndef ADC_MULTIPLIER
 #define ADC_MULTIPLIER   (1.750f)
+#endif
 
 // INA3221: pack charging on channel 2 (Adafruit 0-based: CH1=0, CH2=1, CH3=2).
 #ifndef TELEM_INA3221_ADDRESS

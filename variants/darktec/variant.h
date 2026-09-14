@@ -23,6 +23,13 @@
 #define BATTERY_PIN          (17)
 #define ADC_RESOLUTION       12
 
+// VBAT divider 100k/100k (nominal 2.0). Calibrated default 1.750.
+// On-demand / lab: override via generated -include (not -U/-D in
+// PLATFORMIO_BUILD_FLAGS — same pattern as LORA_* in radio_defaults.h).
+#ifndef ADC_MULTIPLIER
+#define ADC_MULTIPLIER       (1.750f)
+#endif
+
 #include "battery_chemistry.h"
 #include "radio_defaults.h"
 
