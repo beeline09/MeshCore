@@ -76,6 +76,11 @@ on:
         required: false
         type: string
         default: "22"
+      adc_multiplier:
+        description: "ADC_MULTIPLIER VBAT divider (default 1.750)"
+        required: false
+        type: string
+        default: "1.750"
   repository_dispatch:
     types: [darktec-ondemand]
   issues:
@@ -114,6 +119,7 @@ jobs:
           INPUT_SF: ${{ github.event.inputs.lora_sf }}
           INPUT_CR: ${{ github.event.inputs.lora_cr }}
           INPUT_TX: ${{ github.event.inputs.lora_tx }}
+          INPUT_ADC: ${{ github.event.inputs.adc_multiplier }}
           DISPATCH_TRACK: ${{ github.event.client_payload.firmware_track }}
           DISPATCH_ROLE: ${{ github.event.client_payload.role_slug }}
           DISPATCH_CHEM: ${{ github.event.client_payload.chem_slug }}
@@ -126,6 +132,7 @@ jobs:
           DISPATCH_SF: ${{ github.event.client_payload.lora_sf }}
           DISPATCH_CR: ${{ github.event.client_payload.lora_cr }}
           DISPATCH_TX: ${{ github.event.client_payload.lora_tx }}
+          DISPATCH_ADC: ${{ github.event.client_payload.adc_multiplier }}
         run: |
           set -euo pipefail
           python3 <<'PY'
@@ -146,6 +153,7 @@ jobs:
                   "lora_sf": os.environ.get("INPUT_SF", "") or "8",
                   "lora_cr": os.environ.get("INPUT_CR", "") or "8",
                   "lora_tx": os.environ.get("INPUT_TX", "") or "22",
+                  "adc_multiplier": os.environ.get("INPUT_ADC", "") or "1.750",
               }
           elif event == "repository_dispatch":
               data = {
@@ -161,6 +169,7 @@ jobs:
                   "lora_sf": os.environ.get("DISPATCH_SF", "") or "8",
                   "lora_cr": os.environ.get("DISPATCH_CR", "") or "8",
                   "lora_tx": os.environ.get("DISPATCH_TX", "") or "22",
+                  "adc_multiplier": os.environ.get("DISPATCH_ADC", "") or "1.750",
               }
           else:
               body = os.environ.get("ISSUE_BODY") or ""
@@ -217,6 +226,7 @@ jobs:
           sf = num("lora_sf", "8", 5, 12, as_int=True)
           cr = num("lora_cr", "8", 5, 8, as_int=True)
           tx = num("lora_tx", "22", 1, 22, as_int=True)
+          adc = num("adc_multiplier", "1.750", 0.5, 10.0)
 
           ROLE_MAP = {
               "companion_radio_ble": "Darktec_companion_radio_ble",
@@ -278,6 +288,7 @@ jobs:
               "lora_sf": sf,
               "lora_cr": cr,
               "lora_tx": tx,
+              "adc_multiplier": adc,
           }
           print(json.dumps(out, ensure_ascii=False, indent=2))
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
@@ -328,6 +339,7 @@ jobs:
           LORA_SF: ${{ steps.req.outputs.lora_sf }}
           LORA_CR: ${{ steps.req.outputs.lora_cr }}
           LORA_TX_POWER: ${{ steps.req.outputs.lora_tx }}
+          ADC_MULTIPLIER: ${{ steps.req.outputs.adc_multiplier }}
           FIRMWARE_TRACK: ${{ steps.req.outputs.firmware_track }}
         run: |
           chmod +x scripts/build-darktec-ondemand.sh

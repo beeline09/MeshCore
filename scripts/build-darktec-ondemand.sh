@@ -19,11 +19,13 @@
 #   LORA_SF            5–12 (default 8)
 #   LORA_CR            5–8 (default 8)
 #   LORA_TX_POWER      dBm (default 22)
+#   ADC_MULTIPLIER     VBAT divider (default 1.750; range 0.5–10)
 #
 # Output:
-#   out/Darktec_{role}_{chem}_{cells}s_{protect}__{name_slug}__{radio_slug}__{sha}.{uf2,zip}
+#   out/Darktec_{role}_{chem}_{cells}s_{protect}__{name_slug}__{radio_slug}[__adc{n}]__{sha}.{uf2,zip}
+#   adc slug only when ADC_MULTIPLIER != 1.750 (keeps default on-demand names stable)
 #
-# IMPORTANT: do NOT put battery/LORA overrides as -U/-D in PLATFORMIO_BUILD_FLAGS.
+# IMPORTANT: do NOT put battery/LORA/ADC overrides as -U/-D in PLATFORMIO_BUILD_FLAGS.
 # PlatformIO moves all -U* to the end of the gcc argv, so -UBATTERY… -DBATTERY…
 # leaves the macro UNDEFINED. Put overrides in the generated -include header instead.
 set -euo pipefail
@@ -57,13 +59,28 @@ DEFAULT_BW="62.5"
 DEFAULT_SF="8"
 DEFAULT_CR="8"
 DEFAULT_TX="22"
+DEFAULT_ADC="1.750"
+
+ADC_MULTIPLIER="$(python3 -c 'import sys
+v=float(sys.argv[1].replace(",", "."))
+if not (0.5 <= v <= 10.0):
+    raise SystemExit(f"ADC_MULTIPLIER out of range [0.5,10]: {v}")
+print(f"{v:.3f}")
+' "${ADC_MULTIPLIER:-1.750}")"
 
 radio_token() {
   printf '%s' "$1" | tr '.' 'p' | tr -cd 'A-Za-z0-9p-'
 }
 RADIO_SLUG="f$(radio_token "$LORA_FREQ")-bw$(radio_token "$LORA_BW")-sf${LORA_SF}-cr${LORA_CR}-tx${LORA_TX_POWER}"
 
-OUT_BASE="Darktec_${DARKTEC_ROLE_SLUG}_${CHEM_SLUG}_${BATTERY_CELLS}s_${PROTECT_SLUG}__${NAME_SLUG}__${RADIO_SLUG}__${COMMIT_HASH}"
+ADC_CUSTOM=0
+ADC_SLUG=""
+if [ "$ADC_MULTIPLIER" != "$DEFAULT_ADC" ]; then
+  ADC_CUSTOM=1
+  ADC_SLUG="__adc$(radio_token "$ADC_MULTIPLIER")"
+fi
+
+OUT_BASE="Darktec_${DARKTEC_ROLE_SLUG}_${CHEM_SLUG}_${BATTERY_CELLS}s_${PROTECT_SLUG}__${NAME_SLUG}__${RADIO_SLUG}${ADC_SLUG}__${COMMIT_HASH}"
 
 rm -rf out
 mkdir -p out
@@ -83,13 +100,15 @@ QUIET_H="${ROOT}/variants/darktec/build_quiet.h"
 mkdir -p "$(dirname "$DEFS_H")"
 python3 - "$DEFS_H" "${FIRMWARE_VERSION_STRING}" "${ADVERT_NAME:-}" \
   "${BATTERY_CHEMISTRY}" "${BATTERY_CELLS}" "${DARKTEC_BATT_PROTECT}" \
-  "${RADIO_CUSTOM}" "${LORA_FREQ}" "${LORA_BW}" "${LORA_SF}" "${LORA_CR}" "${LORA_TX_POWER}" <<'PY'
+  "${RADIO_CUSTOM}" "${LORA_FREQ}" "${LORA_BW}" "${LORA_SF}" "${LORA_CR}" "${LORA_TX_POWER}" \
+  "${ADC_MULTIPLIER}" <<'PY'
 import sys
 (
     path, ver, advert,
     chem, cells, protect,
     radio_custom, freq, bw, sf, cr, tx,
-) = sys.argv[1:13]
+    adc,
+) = sys.argv[1:14]
 
 def c_str(s: str) -> str:
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ").replace("\r", "")[:31] + '"'
@@ -105,6 +124,10 @@ lines = [
     f"#define BATTERY_CELLS  {cells}",
     "#undef DARKTEC_BATT_PROTECT",
     f"#define DARKTEC_BATT_PROTECT  {protect}",
+    "",
+    "/* VBAT divider. Default 1.750 (100k/100k, calibrated). */",
+    "#undef ADC_MULTIPLIER",
+    f"#define ADC_MULTIPLIER  {adc}f",
     "",
     "#undef FIRMWARE_VERSION",
     f"#define FIRMWARE_VERSION {c_str(ver)}",
@@ -133,7 +156,7 @@ if radio_custom == "1":
     ]
 
 open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
-print(f"Wrote {path} (radio_custom={radio_custom})")
+print(f"Wrote {path} (radio_custom={radio_custom} adc={adc})")
 PY
 
 # Only quiet debug + include headers. No -U/-D for battery or LORA floats.
@@ -142,6 +165,7 @@ export PLATFORMIO_BUILD_FLAGS="-DCFG_DEBUG=0 -include ${QUIET_H} -include ${DEFS
 echo "=== On-demand build ${OUT_BASE} ==="
 echo "env=${DARKTEC_PIO_ENV} chem=${BATTERY_CHEMISTRY} cells=${BATTERY_CELLS} protect=${DARKTEC_BATT_PROTECT} name=${ADVERT_NAME:-<default>}"
 echo "radio freq=${LORA_FREQ} bw=${LORA_BW} sf=${LORA_SF} cr=${LORA_CR} tx=${LORA_TX_POWER} custom=${RADIO_CUSTOM}"
+echo "adc_multiplier=${ADC_MULTIPLIER} custom=${ADC_CUSTOM}"
 echo "PLATFORMIO_BUILD_FLAGS=${PLATFORMIO_BUILD_FLAGS}"
 cat "$DEFS_H"
 

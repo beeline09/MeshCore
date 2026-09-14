@@ -18,6 +18,7 @@ fi
 PATHS=(
   variants/darktec
   scripts/darktec-changelog.sh
+  scripts/build-darktec-ondemand.sh
   scripts/build-darktec-matrix.sh
   scripts/next-darktec-version.sh
   .github/workflows/build-darktec-firmwares.yml

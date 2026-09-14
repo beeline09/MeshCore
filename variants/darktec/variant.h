@@ -23,6 +23,13 @@
 #define BATTERY_PIN          (17)
 #define ADC_RESOLUTION       12
 
+// Делитель VBAT 100к/100к (номинал 2.0). Калиброванный дефолт 1.750.
+// On-demand / лаборатория: override через generated -include (не -U/-D
+// в PLATFORMIO_BUILD_FLAGS — тот же приём, что LORA_* в radio_defaults.h).
+#ifndef ADC_MULTIPLIER
+#define ADC_MULTIPLIER       (1.750f)
+#endif
+
 // Химия / число ячеек → % на UI и пороги защиты питания.
 // См. battery_chemistry.h (BATTERY_CHEMISTRY, BATTERY_CELLS). Пакет ≤ 5 В.
 #include "battery_chemistry.h"
