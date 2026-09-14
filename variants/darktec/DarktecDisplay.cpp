@@ -71,8 +71,8 @@ bool DarktecDisplay::statusDotWanted() const {
 }
 
 static const int kDotX = 3;
-static const int kDotY = 46 + (8 - 3) / 2;
 static const int kDotS = 3;
+static const int kDotY = (64 - kDotS) / 2;  // 30, середина 64px OLED; X не трогаем
 
 void DarktecDisplay::paintStatusDot(bool on) {
   setColor(on ? UIColor::title_txt : UIColor::window_bkg);
