@@ -10,10 +10,9 @@ bool DarktecDisplay::statusDotWanted() const {
   return board.isLoRaActivity();
 }
 
-// ui-new FIRST: "< Connected >" на OLED — y = content_y+24 = 46, глиф 8 px.
 static const int kDotX = 3;
-static const int kDotY = 46 + (8 - 3) / 2;  // 48, вертикальный центр строки
 static const int kDotS = 3;
+static const int kDotY = (64 - kDotS) / 2;  // 30, середина 64px OLED; X не трогаем
 
 void DarktecDisplay::paintStatusDot(bool on) {
   setColor(on ? LIGHT : DARK);
