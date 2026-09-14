@@ -1,7 +1,9 @@
 name: Build Darktec On-Demand
 
-# Single-variant build for custom advert names / experimental flasher.
+# Single-variant build for custom advert names / flasher.
 # Cache: GitHub Release tag `darktec-ondemand` (assets keyed by params + git sha).
+# firmware_track=south → checkout south_edition (protect required)
+# firmware_track=official → checkout dev-darktec (no protect)
 #
 # Triggers:
 #   - workflow_dispatch (manual / API)
@@ -16,6 +18,11 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
+      firmware_track:
+        description: "south | official"
+        required: false
+        type: string
+        default: "south"
       role_slug:
         description: "Role slug (e.g. repeater)"
         required: true
@@ -30,8 +37,8 @@ on:
         type: string
         default: "1"
       protect_slug:
-        description: "adc | off"
-        required: true
+        description: "adc | off (south only; ignored for official)"
+        required: false
         type: string
         default: "adc"
       advert_name:
@@ -75,7 +82,7 @@ on:
     types: [opened, edited]
 
 concurrency:
-  group: darktec-ondemand-${{ github.event.issue.number || github.event.client_payload.cache_key || github.run_id }}
+  group: darktec-ondemand-${{ github.event.inputs.firmware_track || github.event.client_payload.firmware_track || github.event.issue.number || github.event.client_payload.cache_key || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -90,24 +97,12 @@ jobs:
       ))
     runs-on: ubuntu-latest
     steps:
-      - name: Clone Repo
-        uses: actions/checkout@v6
-        with:
-          ref: south_edition
-          fetch-depth: 0
-
-      - name: Tag issue with darktec-ondemand
-        if: github.event_name == 'issues'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh issue edit "${{ github.event.issue.number }}" --add-label "darktec-ondemand" || true
-
       - name: Parse request
         id: req
         env:
           EVENT_NAME: ${{ github.event_name }}
           ISSUE_BODY: ${{ github.event.issue.body }}
+          INPUT_TRACK: ${{ github.event.inputs.firmware_track }}
           INPUT_ROLE: ${{ github.event.inputs.role_slug }}
           INPUT_CHEM: ${{ github.event.inputs.chem_slug }}
           INPUT_CELLS: ${{ github.event.inputs.cells }}
@@ -119,6 +114,7 @@ jobs:
           INPUT_SF: ${{ github.event.inputs.lora_sf }}
           INPUT_CR: ${{ github.event.inputs.lora_cr }}
           INPUT_TX: ${{ github.event.inputs.lora_tx }}
+          DISPATCH_TRACK: ${{ github.event.client_payload.firmware_track }}
           DISPATCH_ROLE: ${{ github.event.client_payload.role_slug }}
           DISPATCH_CHEM: ${{ github.event.client_payload.chem_slug }}
           DISPATCH_CELLS: ${{ github.event.client_payload.cells }}
@@ -138,6 +134,7 @@ jobs:
           data = {}
           if event == "workflow_dispatch":
               data = {
+                  "firmware_track": os.environ.get("INPUT_TRACK", "") or "south",
                   "role_slug": os.environ.get("INPUT_ROLE", ""),
                   "chem_slug": os.environ.get("INPUT_CHEM", ""),
                   "cells": os.environ.get("INPUT_CELLS", "1"),
@@ -152,6 +149,7 @@ jobs:
               }
           elif event == "repository_dispatch":
               data = {
+                  "firmware_track": os.environ.get("DISPATCH_TRACK", "") or "south",
                   "role_slug": os.environ.get("DISPATCH_ROLE", ""),
                   "chem_slug": os.environ.get("DISPATCH_CHEM", ""),
                   "cells": str(os.environ.get("DISPATCH_CELLS", "1")),
@@ -176,6 +174,14 @@ jobs:
                   k, v = line.split("=", 1)
                   data[k.strip()] = v.strip()
 
+          raw_track = (data.get("firmware_track") or data.get("git_ref") or "south").strip().lower()
+          if raw_track in ("official", "dev-darktec", "dev_darktec"):
+              track = "official"
+              git_ref = "dev-darktec"
+          else:
+              track = "south"
+              git_ref = "south_edition"
+
           role = data.get("role_slug", "")
           chem = data.get("chem_slug", "")
           cells = str(data.get("cells", "1"))
@@ -183,7 +189,6 @@ jobs:
           advert = data.get("advert_name", "") or ""
           slug = data.get("name_slug", "") or ""
 
-          # Latin-only advert names (A–Z, digits, space, - _ . ')
           if advert:
               advert = advert.strip()
               if not re.fullmatch(r"[A-Za-z0-9 _.'-]{1,31}", advert) or not re.search(r"[A-Za-z]", advert):
@@ -204,7 +209,6 @@ jobs:
                   if iv != v:
                       raise SystemExit(f"{key} must be integer: {raw}")
                   return str(iv)
-              # trim trailing zeros for floats
               s = f"{v:.6f}".rstrip("0").rstrip(".")
               return s
 
@@ -241,8 +245,14 @@ jobs:
               raise SystemExit(f"bad cells: {cells}")
           if chem != "lto" and cells != "1":
               raise SystemExit("cells=2 only for lto")
-          if protect not in PROTECT_MAP:
-              raise SystemExit(f"bad protect_slug: {protect}")
+
+          if track == "official":
+              protect = ""
+              protect_macro = ""
+          else:
+              if protect not in PROTECT_MAP:
+                  raise SystemExit(f"bad protect_slug: {protect}")
+              protect_macro = PROTECT_MAP[protect]
 
           def make_slug(s: str) -> str:
               s = re.sub(r"[^a-z0-9]+", "-", (s or "").lower()).strip("-")
@@ -252,13 +262,15 @@ jobs:
               slug = make_slug(advert) if advert else "default"
 
           out = {
+              "firmware_track": track,
+              "git_ref": git_ref,
               "pio_env": ROLE_MAP[role],
               "role_slug": role,
               "chem_slug": chem,
               "chem_macro": CHEM_MAP[chem],
               "cells": cells,
               "protect_slug": protect,
-              "protect_macro": PROTECT_MAP[protect],
+              "protect_macro": protect_macro,
               "advert_name": advert,
               "name_slug": slug,
               "lora_freq": freq,
@@ -272,6 +284,19 @@ jobs:
               for k, v in out.items():
                   f.write(f"{k}={v}\n")
           PY
+
+      - name: Clone Repo
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.req.outputs.git_ref }}
+          fetch-depth: 0
+
+      - name: Tag issue with darktec-ondemand
+        if: github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue edit "${{ github.event.issue.number }}" --add-label "darktec-ondemand" || true
 
       - name: Setup Build Environment
         uses: ./.github/actions/setup-build-environment
@@ -303,8 +328,12 @@ jobs:
           LORA_SF: ${{ steps.req.outputs.lora_sf }}
           LORA_CR: ${{ steps.req.outputs.lora_cr }}
           LORA_TX_POWER: ${{ steps.req.outputs.lora_tx }}
+          FIRMWARE_TRACK: ${{ steps.req.outputs.firmware_track }}
         run: |
           chmod +x scripts/build-darktec-ondemand.sh
+          if [ "${FIRMWARE_TRACK}" = "official" ]; then
+            unset DARKTEC_BATT_PROTECT PROTECT_SLUG
+          fi
           /usr/bin/env bash scripts/build-darktec-ondemand.sh
 
       - name: Ensure darktec-ondemand release exists
@@ -312,10 +341,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           NOTES="$(cat <<'EOF'
-          **Служебный кэш** для lab-flasher `/darktec_new/` (не «продуктовый» релиз).
+          **Служебный кэш** для flasher `/darktec/` (не «продуктовый» релиз).
 
-          Один тег — все кастомные UF2/zip. Старые ассеты чистятся автоматически
-          (старше ~14 дней или сверх лимита). Смотрите обычные релизы `darktec-v*` / `darktec-latest`.
+          Один тег — все кастомные UF2/zip (южная `Darktec_…` и официальная `DarktecOff_…`).
+          Старые ассеты чистятся автоматически (старше ~14 дней или сверх лимита).
+          Смотрите обычные релизы `darktec-v*` / `darktec-latest` / `darktec-official-latest`.
           EOF
           )"
           if ! gh release view darktec-ondemand >/dev/null 2>&1; then
@@ -338,7 +368,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(out/Darktec_*__*.uf2 out/Darktec_*__*.zip)
+          files=(out/Darktec*__*.uf2 out/Darktec*__*.zip)
           if [ ${#files[@]} -eq 0 ]; then
             echo "No on-demand artifacts"
             exit 1
@@ -367,7 +397,7 @@ jobs:
             exit 0
           fi
           shopt -s nullglob
-          files=(out/Darktec_*__*.uf2 out/Darktec_*__*.zip)
+          files=(out/Darktec*__*.uf2 out/Darktec*__*.zip)
           if [ ${#files[@]} -eq 0 ]; then
             echo "No assets to mirror"
             exit 0
@@ -385,18 +415,19 @@ jobs:
         if: github.event_name == 'issues'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_REF: ${{ steps.req.outputs.git_ref }}
         run: |
-          UF2=$(ls out/Darktec_*__*.uf2 | head -n1)
+          UF2=$(ls out/Darktec*__*.uf2 | head -n1)
           BASE=$(basename "$UF2" .uf2)
           URL_UF2="https://github.com/beeline09/MeshCore/releases/download/darktec-ondemand/${BASE}.uf2"
           URL_ZIP="https://github.com/beeline09/MeshCore/releases/download/darktec-ondemand/${BASE}.zip"
           gh issue comment "${{ github.event.issue.number }}" --body "$(cat <<EOF
-          ✅ Сборка готова (\`south_edition\` @ \`$(git rev-parse --short=8 HEAD)\`).
+          ✅ Сборка готова (\`${GIT_REF}\` @ \`$(git rev-parse --short=8 HEAD)\`).
 
           - UF2: ${URL_UF2}
           - OTA zip: ${URL_ZIP}
 
-          Можно закрыть issue. Flasher \`/darktec_new/\` подхватит файлы по кэшу.
+          Можно закрыть issue. Flasher \`/darktec/\` подхватит файлы по кэшу.
           «Прошить» (Serial) и OTA с телефона используют \`.zip\` — зеркало сайта обновится через ~1–2 мин.
           EOF
           )"
