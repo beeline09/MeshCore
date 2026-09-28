@@ -1,0 +1,17 @@
+* text=auto
+*.h text eol=lf
+*.cpp text eol=lf
+*.c text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.ini text eol=lf
+*.sh text eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.uf2 binary
+*.bin binary
+*.ttf binary
+*.eot binary

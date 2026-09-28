@@ -103,6 +103,15 @@ LPS22HBClass LPS22HB(*TELEM_WIRE);
 #ifndef TELEM_INA3221_SHUNT_VALUE
 #define TELEM_INA3221_SHUNT_VALUE 0.100 // most variants will have a 0.1 ohm shunts
 #endif
+#ifndef TELEM_INA3221_SHUNT_CH0
+#define TELEM_INA3221_SHUNT_CH0   TELEM_INA3221_SHUNT_VALUE
+#endif
+#ifndef TELEM_INA3221_SHUNT_CH1
+#define TELEM_INA3221_SHUNT_CH1   TELEM_INA3221_SHUNT_VALUE
+#endif
+#ifndef TELEM_INA3221_SHUNT_CH2
+#define TELEM_INA3221_SHUNT_CH2   TELEM_INA3221_SHUNT_VALUE
+#endif
 #ifndef TELEM_INA3221_NUM_CHANNELS
 #define TELEM_INA3221_NUM_CHANNELS 3
 #endif
@@ -345,8 +354,14 @@ static void query_lps22hb(uint8_t ch, uint8_t, CayenneLPP& lpp) {
 #if ENV_INCLUDE_INA3221
 static uint8_t init_ina3221(TwoWire* wire, uint8_t addr) {
   if (!INA3221.begin(addr, wire)) return 0;
+  // Shunt resistance per channel. Boards that use a different shunt on each
+  // channel can override TELEM_INA3221_SHUNT_CH0/1/2 individually; each one
+  // defaults to TELEM_INA3221_SHUNT_VALUE, so existing boards are unaffected.
+  static const float shunt_ohms[3] = {
+    TELEM_INA3221_SHUNT_CH0, TELEM_INA3221_SHUNT_CH1, TELEM_INA3221_SHUNT_CH2
+  };
   for (int i = 0; i < TELEM_INA3221_NUM_CHANNELS; i++) {
-    INA3221.setShuntResistance(i, TELEM_INA3221_SHUNT_VALUE);
+    INA3221.setShuntResistance(i, shunt_ohms[i]);
   }
   // Each enabled hardware channel becomes its own telemetry channel.
   uint8_t enabled = 0;
@@ -553,13 +568,13 @@ struct SensorDef {
 
 static const SensorDef SENSOR_TABLE[] = {
 #if ENV_INCLUDE_AHTX0
-  { TELEM_AHTX_ADDRESS,    "AHT10/AHT20", init_ahtx0,    query_ahtx0    },
+  { TELEM_AHTX_ADDRESS,    "AHTX0",       init_ahtx0,    query_ahtx0    },
 #endif
 #ifdef ENV_INCLUDE_BME680
   { TELEM_BME680_ADDRESS,  "BME680",       init_bme680,   query_bme680   },
 #endif
 #if ENV_INCLUDE_BME680_BSEC
-  { TELEM_BME680_ADDRESS,  "BME680+BSEC",   init_bme680_bsec, query_bme680_bsec },
+  { TELEM_BME680_ADDRESS,  "BME680+B",      init_bme680_bsec, query_bme680_bsec },
 #endif
 #if ENV_INCLUDE_BME280
   { TELEM_BME280_ADDRESS,  "BME280",       init_bme280,   query_bme280   },
@@ -807,6 +822,13 @@ void EnvironmentSensorManager::rakGPSInit(){
 
 bool EnvironmentSensorManager::gpsIsAwake(uint8_t ioPin){
 
+  #if defined(ETHERNET_ENABLED) && defined(RAK_BOARD)
+    if (ioPin == WB_IO2) {
+      // WB_IO2 powers the Ethernet module on RAK baseboards.
+      return false;
+    }
+  #endif
+
   //set initial waking state
   pinMode(ioPin,OUTPUT);
   digitalWrite(ioPin,LOW);
@@ -889,11 +911,11 @@ void EnvironmentSensorManager::stop_gps() {
 void EnvironmentSensorManager::loop() {
 
   #if ENV_INCLUDE_GPS
-  static long next_gps_update = 0;
+  static unsigned long next_gps_update = 0;
   if (gps_active) {
     _location->loop();
   }
-  if (millis() > next_gps_update) {
+  if ((long)(millis() - next_gps_update) > 0) {
 
     if(gps_active){
     #ifdef RAK_WISBLOCK_GPS

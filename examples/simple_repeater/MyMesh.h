@@ -11,6 +11,7 @@
   #include <LittleFS.h>
 #elif defined(ESP32)
   #include <SPIFFS.h>
+  using File = fs::File;
 #endif
 
 #ifdef WITH_RS232_BRIDGE
@@ -33,6 +34,7 @@
 #include <helpers/StatsFormatHelper.h>
 #include <helpers/TxtDataHelpers.h>
 #include <helpers/RegionMap.h>
+#include <helpers/RoutingPolicy.h>
 #include "RateLimiter.h"
 
 #ifdef WITH_BRIDGE
@@ -69,16 +71,22 @@ struct NeighbourInfo {
 };
 
 #ifndef FIRMWARE_BUILD_DATE
-  #define FIRMWARE_BUILD_DATE   "6 Jun 2026"
+  #define FIRMWARE_BUILD_DATE   "14 Aug 2026"
 #endif
 
 #ifndef FIRMWARE_VERSION
-  #define FIRMWARE_VERSION   "v1.16.0"
+  #define FIRMWARE_VERSION   "v1.17.1"
 #endif
 
 #define FIRMWARE_ROLE "repeater"
 
 #define PACKET_LOG_FILE  "/packet_log"
+
+// Time-sync sample buffer. Adverts can be hours apart in a quiet mesh, so the
+// buffer holds enough of them to still find agreement between several peers.
+#ifndef TS_BUF_SIZE
+  #define TS_BUF_SIZE 24
+#endif
 
 class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   FILESYSTEM* _fs;
@@ -91,8 +99,7 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   CommonCLI _cli;
   uint8_t reply_data[MAX_PACKET_PAYLOAD];
   uint8_t reply_path[MAX_PATH_SIZE];
-  int8_t  reply_path_len;
-  uint8_t reply_path_hash_size;
+  uint8_t reply_path_len;
   TransportKeyStore key_store;
   RegionMap region_map, temp_map;
   RegionEntry* load_stack[8];
@@ -107,14 +114,26 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   NeighbourInfo neighbours[MAX_NEIGHBOURS];
 #endif
   CayenneLPP telemetry;
-  struct TsSample { uint32_t ts; uint32_t pub_hash; };
-  TsSample _ts_buf[10];
+  // rx_millis lets a sample be aged forward to "now", so adverts that arrived
+  // minutes or hours apart can still be compared against each other.
+  struct TsSample { uint32_t ts; uint32_t pub_hash; unsigned long rx_millis; };
+  TsSample _ts_buf[TS_BUF_SIZE];
   int      _ts_buf_pos = 0;
   int      _ts_buf_count = 0;
   uint32_t _ts_sync_count = 0;
   uint32_t _ts_advert_count = 0;   // total adverts received (any timestamp)
   uint32_t _ts_valid_count = 0;    // adverts with valid timestamp range
   uint32_t _ts_last_sync = 0;      // unix ts of last successful sync
+  uint32_t _time_save_at = 0;      // millis() of next flash save (0 = not scheduled)
+  uint32_t _time_chk_at  = 0;      // millis() of next RTC-memory checkpoint
+  bool     _ts_restored_from_flash = false;  // clock came from flash, not from a real sync
+  bool     _clock_persisted = false;         // a plausible time has been written to flash
+  uint32_t _ts_restore_base = 0;             // clock value restored from storage
+  unsigned long _ts_restore_millis = 0;      // millis() when it was restored
+
+  void restoreClockFromFile();
+  void saveClockToFile();
+  void checkpointClock();
   int32_t  _ts_last_adj = 0;       // seconds adjusted on last sync
   int      _ts_best_cluster = 0;   // best cluster seen so far (for diagnostics)
   void tryTimeSyncFromBuf();
@@ -162,6 +181,9 @@ protected:
   int getInterferenceThreshold() const override {
     return _prefs.interference_threshold;
   }
+  bool getCADEnabled() const override {
+    return _prefs.cad_enabled;
+  }
   int getAGCResetInterval() const override {
     return ((int)_prefs.agc_reset_interval) * 4000;   // milliseconds
   }
@@ -175,7 +197,7 @@ protected:
   }
 #endif
 
-  bool filterRecvFloodPacket(mesh::Packet* pkt) override;
+  mesh::DispatcherAction onRecvPacket(mesh::Packet* pkt) override;
 
   void onAnonDataRecv(mesh::Packet* packet, const uint8_t* secret, const mesh::Identity& sender, uint8_t* data, size_t len) override;
   int searchPeersByHash(const uint8_t* hash) override;
@@ -261,7 +283,10 @@ public:
   // To check if there is pending work
   bool hasPendingWork() const;
 
-#if defined(USE_SX1262) || defined(USE_SX1268)
-  void setRxBoostedGain(bool enable) override;
-#endif
+  bool setRxBoostedGain(bool enable) override;
+
+  #if defined(USE_LR2021)
+  virtual bool configSideDetectors(const uint8_t sideDetSFs[], uint8_t num, float bw) override;
+  #endif
+
 };

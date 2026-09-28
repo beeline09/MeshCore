@@ -2,6 +2,9 @@
 
 #include <Arduino.h> // needed for PlatformIO
 #include <Mesh.h>
+#ifdef WITH_COMPANION_CLI
+#include <helpers/CliReplySplitter.h>
+#endif
 
 #define CMD_APP_START                 1
 #define CMD_SEND_TXT_MSG              2
@@ -106,6 +109,7 @@
 #define DIRECT_SEND_PERHOP_EXTRA_MILLIS 250
 #define LAZY_CONTACTS_WRITE_DELAY       5000
 #define LAZY_PREFS_WRITE_DELAY          2000
+#define APP_DRAIN_GRACE_MILLIS          3000
 
 #define PUBLIC_GROUP_PSK                "izOH6cXN6mrJ5e26oRXNcg=="
 
@@ -328,6 +332,9 @@ float MyMesh::getAirtimeBudgetFactor() const {
 int MyMesh::getInterferenceThreshold() const {
   return 0; // disabled for now, until currentRSSI() problem is resolved
 }
+bool MyMesh::getCADEnabled() const {
+  return false; // hardware CAD before TX (disabled by default, until configurable)
+}
 
 int MyMesh::calcRxDelay(float score, uint32_t air_time) const {
   if (_prefs.rx_delay_base <= 0.0f) return 0;
@@ -514,7 +521,11 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
   }
   memcpy(&out_frame[i], from.id.pub_key, 6);
   i += 6; // just 6-byte prefix
-  uint8_t path_len = out_frame[i++] = pkt->isRouteFlood() ? pkt->getPathHashCount() : 0xFF;
+  // The app gets the packed byte (low 6 bits = hop count, top 2 = hash size - 1),
+  // same as upstream: it decodes both fields out of it. Our own display wants
+  // just the hop count, or it renders "[64]" for a 2-byte-hash sender.
+  out_frame[i++] = pkt->isRouteFlood() ? pkt->path_len : 0xFF;
+  uint8_t path_len = pkt->isRouteFlood() ? pkt->getPathHashCount() : 0xFF;
   out_frame[i++] = txt_type;
   memcpy(&out_frame[i], &sender_timestamp, 4);
   i += 4;
@@ -571,7 +582,7 @@ bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
 }
 
 bool MyMesh::allowPacketForward(const mesh::Packet* packet) {
-  return _prefs.client_repeat != 0;
+  return _prefs.isRepeatEn();
 }
 
 void MyMesh::sendFloodScoped(const TransportKey& scope, mesh::Packet* pkt, uint32_t delay_millis) {
@@ -673,7 +684,11 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
     if (getChannel(channel_idx, ch) && strcmp(ch.name, "TerminalCLI") == 0) return;
   }
   out_frame[i++] = channel_idx;
-  uint8_t path_len = out_frame[i++] = pkt->isRouteFlood() ? pkt->getPathHashCount() : 0xFF;
+  // The app gets the packed byte (low 6 bits = hop count, top 2 = hash size - 1),
+  // same as upstream: it decodes both fields out of it. Our own display wants
+  // just the hop count, or it renders "[64]" for a 2-byte-hash sender.
+  out_frame[i++] = pkt->isRouteFlood() ? pkt->path_len : 0xFF;
+  uint8_t path_len = pkt->isRouteFlood() ? pkt->getPathHashCount() : 0xFF;
 
   out_frame[i++] = TXT_TYPE_PLAIN;
   memcpy(&out_frame[i], &timestamp, 4);
@@ -722,7 +737,7 @@ void MyMesh::onChannelDataRecv(const mesh::GroupChannel &channel, mesh::Packet *
 
   uint8_t channel_idx = findChannelIdx(channel);
   out_frame[i++] = channel_idx;
-  out_frame[i++] = pkt->isRouteFlood() ? pkt->getPathHashCount() : 0xFF;
+  out_frame[i++] = pkt->isRouteFlood() ? pkt->path_len : 0xFF;  // packed byte, as above
   out_frame[i++] = (uint8_t)(data_type & 0xFF);
   out_frame[i++] = (uint8_t)(data_type >> 8);
   out_frame[i++] = (uint8_t)data_len;
@@ -773,6 +788,11 @@ uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_tim
       telemetry.addVoltage(TELEM_CHANNEL_SELF, (float)board.getBattMilliVolts() / 1000.0f);
       // query other sensors -- target specific
       sensors.querySensors(permissions, telemetry);
+
+      float temperature = board.getMCUTemperature();
+      if(!isnan(temperature)) { // Supported boards with built-in temperature sensor. ESP32-C3 may return NAN
+        telemetry.addTemperature(TELEM_CHANNEL_SELF, temperature); // Built-in MCU Temperature
+      }
 
       memcpy(reply, &sender_timestamp,
              4); // reflect sender_timestamp back in response packet (kind of like a 'tag')
@@ -974,7 +994,7 @@ void MyMesh::onSendTimeout() {}
 
 MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMeshTables &tables, DataStore& store, AbstractUITask* ui)
     : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables),
-      _serial(NULL), telemetry(MAX_PACKET_PAYLOAD - 4), _store(&store), _ui(ui) {
+      _serial(NULL), telemetry(MAX_PACKET_PAYLOAD - 4), _store(&store), _ui(ui), _iter(0) {
   _iter_started = false;
   _cli_rescue = false;
   offline_queue_len = 0;
@@ -989,7 +1009,6 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   send_unscoped = false;
 
   // defaults
-  memset(&_prefs, 0, sizeof(_prefs));
   _prefs.airtime_factor = 1.0;
   strcpy(_prefs.node_name, "NONAME");
   _prefs.freq = LORA_FREQ;
@@ -1006,7 +1025,10 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _prefs.ui_max_unread_idx = 1;     // 32 unread messages
   _prefs.ui_max_log_idx = 1;        // 32 history messages
   _prefs.ui_charge_uptime_base = 0;
+  _prefs.radio_fem_rxgain = 1;
+  _prefs.radio_fem_txgain = 0;
   //_prefs.rx_delay_base = 10.0f;  enable once new algo fixed
+  _prefs.setRepeatEn(false);
 #if defined(USE_SX1262) || defined(USE_SX1268)
 #ifdef SX126X_RX_BOOSTED_GAIN
   _prefs.rx_boosted_gain = SX126X_RX_BOOSTED_GAIN;
@@ -1076,7 +1098,9 @@ void MyMesh::begin(bool has_display) {
 #endif
 
   // load persisted prefs
-  _store->loadPrefs(_prefs, sensors.node_lat, sensors.node_lon);
+  _store->loadPrefs(_prefs);
+  sensors.node_lat = _prefs.node_lat;
+  sensors.node_lon = _prefs.node_lon;
 
   // sanitise bad pref values
   _prefs.rx_delay_base = constrain(_prefs.rx_delay_base, 0, 20.0f);
@@ -1133,6 +1157,8 @@ void MyMesh::begin(bool has_display) {
   radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
   radio_driver.setTxPower(_prefs.tx_power_dbm);
   radio_driver.setRxBoostedGainMode(_prefs.rx_boosted_gain);
+  board.setLoRaFemLnaEnabled(_prefs.radio_fem_rxgain);
+  board.setLoRaFemPaGainEnabled(_prefs.radio_fem_txgain);
   MESH_DEBUG_PRINTLN("RX Boosted Gain Mode: %s",
                      radio_driver.getRxBoostedGainMode() ? "Enabled" : "Disabled");
 
@@ -1225,7 +1251,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     i += 40;
     StrHelper::strzcpy((char *)&out_frame[i], FIRMWARE_VERSION, 20);
     i += 20;
-    out_frame[i++] = _prefs.client_repeat;   // v9+
+    out_frame[i++] = _prefs.isRepeatEn() ? 1 : 0;   // v9+
     out_frame[i++] = _prefs.path_hash_mode;  // v10+
     _serial->writeFrame(out_frame, i);
   } else if (cmd_frame[0] == CMD_APP_START &&
@@ -1339,8 +1365,17 @@ void MyMesh::handleCmdFrame(size_t len) {
       if (success && strcmp(channel.name, "TerminalCLI") == 0) {
 #ifdef WITH_COMPANION_CLI
         const_cast<char*>(text)[len - i] = '\0'; // text is not null-terminated in this frame type
+        // Acknowledge acceptance BEFORE running the command. Apps clear their
+        // composer on this response, while the CLI answer is a separate queued
+        // message, so anything slow in between (chat-log flash write, a
+        // scheduled reboot that drops the link) made a command the node did
+        // execute look like a failed send. flushSend() is what makes the ack
+        // early on the queueing transports: writeFrame() only enqueues, and the
+        // queue is otherwise pumped once per loop - after the command.
+        writeOKFrame();
+        _serial->flushSend();
         if (_ui) _ui->newOutgoingMsg(channel.name, text, false);
-        handleTerminalCLI(channel_idx, msg_timestamp, text, true, true);
+        handleTerminalCLI(channel_idx, msg_timestamp, text, true);
 #else
         writeErrFrame(ERR_CODE_UNSUPPORTED_CMD);
 #endif
@@ -1632,8 +1667,8 @@ void MyMesh::handleCmdFrame(size_t len) {
       _prefs.cr = cr;
       _prefs.freq = (float)freq / 1000.0;
       _prefs.bw = (float)bw / 1000.0;
-      _prefs.client_repeat = repeat;
-      dirty_prefs_expiry = futureMillis(LAZY_PREFS_WRITE_DELAY);
+      _prefs.setRepeatEn(repeat != 0);
+      savePrefs();
 
       radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
       MESH_DEBUG_PRINTLN("OK: CMD_SET_RADIO_PARAMS: f=%d, bw=%d, sf=%d, cr=%d", freq, bw, (uint32_t)sf,
@@ -1703,6 +1738,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       // NRF52: can't write flash while BLE connected — defer, loop() will disconnect + save
       _pending_reboot_at = futureMillis(1500);
       _pending_reboot_deadline = futureMillis(30000);
+      _app_drain_until = 0;   // fresh command: open a new drain window
     } else {
 #else
     {
@@ -1801,6 +1837,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       memcpy(anon.id.pub_key, pub_key, PUB_KEY_SIZE);
       anon.out_path_len = 0;   // default to zero-hop direct
       anon.type = ADV_TYPE_NONE;  // unknown
+      anon.lastmod = getRTCClock()->getCurrentTime();
 
       if (addContact(anon)) recipient = &anon;
     }
@@ -1895,6 +1932,11 @@ void MyMesh::handleCmdFrame(size_t len) {
   } else if (cmd_frame[0] == CMD_SEND_TELEMETRY_REQ && len == 4) {  // 'self' telemetry request
     telemetry.reset();
     telemetry.addVoltage(TELEM_CHANNEL_SELF, (float)board.getBattMilliVolts() / 1000.0f);
+    float temperature = board.getMCUTemperature();
+    if(!isnan(temperature)) { // Supported boards with built-in temperature sensor. ESP32-C3 may return NAN
+      telemetry.addTemperature(TELEM_CHANNEL_SELF, temperature); // Built-in MCU Temperature
+    }
+
     // query other sensors -- target specific
     sensors.querySensors(0xFF, telemetry);
 
@@ -2241,6 +2283,7 @@ void MyMesh::handleCmdFrame(size_t len) {
         sendPacket(pkt, priority, 0);
         writeOKFrame();
       } else {
+        releasePacket(pkt);
         writeErrFrame(ERR_CODE_ILLEGAL_ARG);
       }
     } else {
@@ -2450,15 +2493,7 @@ void MyMesh::checkSerialInterface() {
              && !_serial->isWriteBusy() // don't spam the Serial Interface too quickly!
   ) {
     ContactInfo contact;
-    bool found = false;
-    while (_iter.hasNext(this, contact)) {
-      if (contact.type != ADV_TYPE_NONE) {
-        found = true;
-        break;
-      }
-    }
-
-    if (found) {
+    if (_iter.hasNext(this, contact)) {
       if (contact.lastmod > _iter_filter_since) { // apply the 'since' filter
         writeContactRespFrame(RESP_CODE_CONTACT, contact);
         if (contact.lastmod > _most_recent_lastmod) {
@@ -2477,10 +2512,35 @@ void MyMesh::checkSerialInterface() {
   }
 }
 
+bool MyMesh::hasUndeliveredAppFrames() const {
+  if (!_serial || !_serial->isConnected()) return false;
+  return _serial->hasPendingSend() || offline_queue_len > 0;
+}
+
+bool MyMesh::deferForAppDrain(unsigned long& action_at) {
+  // Powering down drops whatever the app has not taken yet: disable() clears the
+  // transport send queue and the reboot discards the RAM offline queue. Hold the
+  // action back while anything is still outstanding, so a command the node did
+  // execute (a CLI reply, an incoming message) is not silently swallowed.
+  if (!hasUndeliveredAppFrames()) {
+    _app_drain_until = 0;
+    return false;
+  }
+  if (_app_drain_until == 0) _app_drain_until = futureMillis(APP_DRAIN_GRACE_MILLIS);
+  if (millisHasNowPassed(_app_drain_until)) {   // app is not collecting; stop waiting
+    _app_drain_until = 0;
+    return false;
+  }
+  _serial->flushSend();   // one extra frame per iteration while draining
+  action_at = futureMillis(50);
+  return true;
+}
+
 void MyMesh::loop() {
   BaseChatMesh::loop();
 
-  if (_pending_reboot_at && millisHasNowPassed(_pending_reboot_at)) {
+  if (_pending_reboot_at && millisHasNowPassed(_pending_reboot_at) &&
+      !deferForAppDrain(_pending_reboot_at)) {
 #ifdef NRF52_PLATFORM
     bool ble_busy = _serial && _serial->isConnected();
 #else
@@ -2502,7 +2562,8 @@ void MyMesh::loop() {
       board.reboot();
     }
   }
-  if (_pending_poweroff_at && millisHasNowPassed(_pending_poweroff_at)) {
+  if (_pending_poweroff_at && millisHasNowPassed(_pending_poweroff_at) &&
+      !deferForAppDrain(_pending_poweroff_at)) {
 #ifdef NRF52_PLATFORM
     bool ble_busy = _serial && _serial->isConnected();
 #else
@@ -2581,52 +2642,39 @@ bool MyMesh::advert() {
 
 #ifdef WITH_COMPANION_CLI
 
-// Split buf into chunks of <=150 chars, trying to break on newlines.
-// Returns number of chunks written into out[].
-static int splitCliReply(const char* buf, char out[][152], int max_chunks) {
-  int n = 0;
-  const char* p = buf;
-  while (*p && n < max_chunks) {
-    int remaining = strlen(p);
-    if (remaining <= 150) {
-      strcpy(out[n++], p);
-      break;
-    }
-    // Find last newline within 150 chars
-    int cut = 150;
-    for (int i = 149; i > 0; i--) {
-      if (p[i] == '\n') { cut = i + 1; break; }
-    }
-    memcpy(out[n], p, cut);
-    out[n][cut] = '\0';
-    n++;
-    p += cut;
-  }
-  return n;
-}
-
 void MyMesh::sendCliReplyPM(const ContactInfo& to, const char* buf) {
   // static: loop_task is single-threaded; these are never called re-entrantly.
-  // Without static, chunks[8][152]=1216B + handleRemoteCLI's buf[512]+cmdBuf[256]
+  // Without static, chunks plus handleRemoteCLI's buf[512]+cmdBuf[256]
   // overflows the 4096B FreeRTOS loop_task stack → immediate hard fault, no log output.
-  static char chunks[8][152];
+  static cli_reply::Chunks chunks;
   static char text[160];
-  int n = splitCliReply(buf, chunks, 8);
+  if (cli_reply::split(buf, cli_reply::MAX_CHUNK_TEXT, chunks) !=
+      cli_reply::SplitResult::Ok) {
+    MESH_DEBUG_PRINTLN("CLI: reply is too long to split safely");
+    return;
+  }
   uint32_t ack_dummy, timeout_dummy;
-  for (int i = 0; i < n; i++) {
-    if (n > 1)
-      snprintf(text, sizeof(text), "[%d/%d] %s", i + 1, n, chunks[i]);
+  for (size_t i = 0; i < chunks.count; i++) {
+    if (chunks.count > 1)
+      snprintf(text, sizeof(text), "[%u/%u] %s", (unsigned)(i + 1),
+               (unsigned)chunks.count, chunks.text[i]);
     else
-      strncpy(text, chunks[i], sizeof(text) - 1);
+      strncpy(text, chunks.text[i], sizeof(text) - 1);
     text[sizeof(text) - 1] = '\0';
     sendMessage(to, getRTCClock()->getCurrentTimeUnique(), 0, text, ack_dummy, timeout_dummy);
   }
 }
 
 void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf, bool mirror_ui) {
-  static char chunks[8][152];
+  static cli_reply::Chunks chunks;
   static char text[200];
-  int n = splitCliReply(buf, chunks, 8);
+  const size_t frame_header_size = app_target_ver >= 3 ? 11 : 8;
+  const size_t chunk_capacity = cli_reply::channelChunkCapacity(
+      MAX_FRAME_SIZE, frame_header_size, strlen(_prefs.node_name), strlen(buf));
+  if (cli_reply::split(buf, chunk_capacity, chunks) != cli_reply::SplitResult::Ok) {
+    MESH_DEBUG_PRINTLN("CLI: channel reply is too long to split safely");
+    return;
+  }
   uint32_t now = getRTCClock()->getCurrentTimeUnique();
   const char* channel_name = "TerminalCLI";
 #ifdef DISPLAY_CLASS
@@ -2636,11 +2684,20 @@ void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf, bool mirror_ui
   }
 #endif
 
-  for (int i = 0; i < n; i++) {
-    if (n > 1)
-      snprintf(text, sizeof(text), "%s: [%d/%d] %s", _prefs.node_name, i + 1, n, chunks[i]);
+  for (size_t i = 0; i < chunks.count; i++) {
+    int text_length;
+    if (chunks.count > 1)
+      text_length = snprintf(text, sizeof(text), "%s: [%u/%u] %s", _prefs.node_name,
+                             (unsigned)(i + 1), (unsigned)chunks.count,
+                             chunks.text[i]);
     else
-      snprintf(text, sizeof(text), "%s: %s", _prefs.node_name, chunks[i]);
+      text_length = snprintf(text, sizeof(text), "%s: %s", _prefs.node_name,
+                             chunks.text[i]);
+    if (text_length < 0 || (size_t)text_length >= sizeof(text) ||
+        (size_t)text_length > MAX_FRAME_SIZE - frame_header_size) {
+      MESH_DEBUG_PRINTLN("CLI: channel reply chunk exceeds frame capacity");
+      return;
+    }
 
     int fi = 0;
     if (app_target_ver >= 3) {
@@ -2655,9 +2712,12 @@ void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf, bool mirror_ui
     out_frame[fi++] = 0; // synthetic local reply, 0 LoRa hops
     out_frame[fi++] = TXT_TYPE_PLAIN;
     memcpy(&out_frame[fi], &now, 4); fi += 4;
-    int tlen = strlen(text);
-    if (fi + tlen > MAX_FRAME_SIZE) tlen = MAX_FRAME_SIZE - fi;
-    memcpy(&out_frame[fi], text, tlen); fi += tlen;
+    if ((size_t)fi != frame_header_size) {
+      MESH_DEBUG_PRINTLN("CLI: unexpected channel reply header size");
+      return;
+    }
+    memcpy(&out_frame[fi], text, (size_t)text_length);
+    fi += text_length;
     addToOfflineQueue(out_frame, fi);
 #ifdef DISPLAY_CLASS
     if (mirror_ui && _ui) _ui->newMsg(0, channel_name, text, offline_queue_len);
@@ -2668,6 +2728,7 @@ void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf, bool mirror_ui
   if (_serial->isConnected()) {
     uint8_t frame[1] = { PUSH_CODE_MSG_WAITING };
     _serial->writeFrame(frame, 1);
+    _serial->flushSend();   // the app can only sync once the tickle is out
   }
 }
 
@@ -2732,7 +2793,7 @@ bool MyMesh::sendGroupMessageWithCyr2LatMap(uint32_t timestamp, mesh::GroupChann
   }
   pkt->setPathHashSizeAndCount(_prefs.path_hash_mode + 1, 0);
 
-  getTables()->hasSeen(pkt);
+  getTables()->markSeen(pkt);  // mark own packet as seen so a repeater echo is dropped at dedupe
   sendPacket(pkt, 1);
   return true;
 }
@@ -3040,11 +3101,13 @@ void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const 
     sendCliReplyPM(from, "rebooting in 1s...");
     _pending_reboot_at = futureMillis(1000);
     _pending_reboot_deadline = futureMillis(30000);
+    _app_drain_until = 0;   // fresh command: open a new drain window
     return;
   } else if (strcmp(cmd, "poweroff") == 0 || strcmp(cmd, "shutdown") == 0) {
     sendCliReplyPM(from, "powering off...");
     _pending_poweroff_at = futureMillis(500);
     _pending_poweroff_deadline = futureMillis(30000);
+    _app_drain_until = 0;   // fresh command: open a new drain window
     return;
   } else if (!handleCliCmd(sender_ts, cmd, buf, true)) {
     if (_cli) _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
@@ -3055,7 +3118,7 @@ void MyMesh::handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const 
 }
 
 void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* cmd,
-                               bool write_ack, bool mirror_ui_reply) {
+                               bool mirror_ui_reply) {
   static char cmdBuf[256];
   strncpy(cmdBuf, cmd, sizeof(cmdBuf) - 1);
   cmdBuf[sizeof(cmdBuf) - 1] = '\0';
@@ -3071,16 +3134,17 @@ void MyMesh::handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* c
     strcpy(buf, "rebooting in 1s...");
     _pending_reboot_at = futureMillis(1000);
     _pending_reboot_deadline = futureMillis(30000);
+    _app_drain_until = 0;   // fresh command: open a new drain window
   } else if (strcmp(cmd, "poweroff") == 0 || strcmp(cmd, "shutdown") == 0) {
     strcpy(buf, "powering off...");
     _pending_poweroff_at = futureMillis(500);
     _pending_poweroff_deadline = futureMillis(30000);
+    _app_drain_until = 0;   // fresh command: open a new drain window
   } else if (!handleCliCmd(sender_ts, cmd, buf, false)) {
     if (_cli) _cli->handleCommand(sender_ts, const_cast<char*>(cmd), buf);
     else      strcpy(buf, "ERR: CLI not initialized");
   }
   MESH_DEBUG_PRINTLN("CLI/Terminal reply(%zu): '%s'", strlen(buf), buf);
-  if (write_ack) writeOKFrame(); // send OK before push so app completes the command exchange first
   if (buf[0]) sendCliReplyChannel(ch_idx, buf, mirror_ui_reply);
 }
 

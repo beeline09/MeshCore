@@ -42,6 +42,7 @@ void AutoDiscoverRTCClock::begin(TwoWire& wire) {
   }
 
   if (i2c_probe(wire, PCF8563_ADDRESS)) {
+    MESH_DEBUG_PRINTLN("PCF8563: Found");
     rtc_8563_success = rtc_8563.begin(&wire);
   }
 
@@ -82,7 +83,10 @@ uint32_t AutoDiscoverRTCClock::getCurrentTime() {
 }
 
 bool AutoDiscoverRTCClock::isTimeReliable() const {
-  return ds3231_success || rv3028_success || rtc_8563_success || rtc_8130_success;
+  if (ds3231_success || rv3028_success || rtc_8563_success || rtc_8130_success) return true;
+  // No RTC chip: the fallback clock is only trustworthy once something has
+  // actually set it (GPS, CLI, companion app, or a restored timestamp).
+  return _fallback->isTimeReliable();
 }
 
 void AutoDiscoverRTCClock::setCurrentTime(uint32_t time) { 

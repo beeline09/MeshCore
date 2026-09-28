@@ -18,6 +18,9 @@
 #ifndef LORA_TX_POWER
   #define LORA_TX_POWER 20
 #endif
+#ifndef PATH_HASH_MODE
+  #define PATH_HASH_MODE 0
+#endif
 
 #ifndef ADVERT_NAME
   #define ADVERT_NAME "repeater"
@@ -147,11 +150,10 @@ uint8_t MyMesh::handleLoginReq(const mesh::Identity& sender, const uint8_t* secr
 uint8_t MyMesh::handleAnonRegionsReq(const mesh::Identity& sender, uint32_t sender_timestamp, const uint8_t* data) {
   if (anon_limiter.allow(rtc_clock.getCurrentTime())) {
     // request data has: {reply-path-len}{reply-path}
-    reply_path_len = *data & 63;
-    reply_path_hash_size = (*data >> 6) + 1;
-    data++;
+    reply_path_len = *data++;
+    if (!mesh::Packet::isValidPathLen(reply_path_len)) return 0;  // reject - bad encoding
 
-    memcpy(reply_path, data, ((uint8_t)reply_path_len) * reply_path_hash_size);
+    mesh::Packet::writePath(reply_path, data, reply_path_len);
     // data += (uint8_t)reply_path_len * reply_path_hash_size;
 
     memcpy(reply_data, &sender_timestamp, 4);   // prefix with sender_timestamp, like a tag
@@ -166,11 +168,10 @@ uint8_t MyMesh::handleAnonRegionsReq(const mesh::Identity& sender, uint32_t send
 uint8_t MyMesh::handleAnonOwnerReq(const mesh::Identity& sender, uint32_t sender_timestamp, const uint8_t* data) {
   if (anon_limiter.allow(rtc_clock.getCurrentTime())) {
     // request data has: {reply-path-len}{reply-path}
-    reply_path_len = *data & 63;
-    reply_path_hash_size = (*data >> 6) + 1;
-    data++;
+    reply_path_len = *data++;
+    if (!mesh::Packet::isValidPathLen(reply_path_len)) return 0;  // reject - bad encoding
 
-    memcpy(reply_path, data, ((uint8_t)reply_path_len) * reply_path_hash_size);
+    mesh::Packet::writePath(reply_path, data, reply_path_len);
     // data += (uint8_t)reply_path_len * reply_path_hash_size;
 
     memcpy(reply_data, &sender_timestamp, 4);   // prefix with sender_timestamp, like a tag
@@ -186,11 +187,10 @@ uint8_t MyMesh::handleAnonOwnerReq(const mesh::Identity& sender, uint32_t sender
 uint8_t MyMesh::handleAnonClockReq(const mesh::Identity& sender, uint32_t sender_timestamp, const uint8_t* data) {
   if (anon_limiter.allow(rtc_clock.getCurrentTime())) {
     // request data has: {reply-path-len}{reply-path}
-    reply_path_len = *data & 63;
-    reply_path_hash_size = (*data >> 6) + 1;
-    data++;
+    reply_path_len = *data++;
+    if (!mesh::Packet::isValidPathLen(reply_path_len)) return 0;  // reject - bad encoding
 
-    memcpy(reply_path, data, ((uint8_t)reply_path_len) * reply_path_hash_size);
+    mesh::Packet::writePath(reply_path, data, reply_path_len);
     // data += (uint8_t)reply_path_len * reply_path_hash_size;
 
     memcpy(reply_data, &sender_timestamp, 4);   // prefix with sender_timestamp, like a tag
@@ -414,24 +414,31 @@ bool MyMesh::isLooped(const mesh::Packet* packet, const uint8_t max_counters[]) 
 }
 
 void MyMesh::sendFloodReply(mesh::Packet* packet, unsigned long delay_millis, uint8_t path_hash_size) {
-  if (recv_pkt_region && !recv_pkt_region->isWildcard()) {  // if _request_ packet scope is known, send reply with same scope
-    TransportKey scope;
-    if (region_map.getTransportKeysFor(*recv_pkt_region, &scope, 1) > 0) {
-      sendFloodScoped(scope, packet, delay_millis, path_hash_size);
-    } else {
+  TransportKey req_scope;
+  bool is_wildcard = recv_pkt_region != NULL && recv_pkt_region->isWildcard();
+  bool req_scope_known = recv_pkt_region != NULL && !is_wildcard
+                      && region_map.getTransportKeysFor(*recv_pkt_region, &req_scope, 1) > 0;
+
+  switch (mesh::chooseReplyScope(req_scope_known, is_wildcard, !default_scope.isNull())) {
+    case mesh::REPLY_SCOPE_REQUEST:
+      sendFloodScoped(req_scope, packet, delay_millis, path_hash_size);   // reply with same scope as request
+      break;
+    case mesh::REPLY_SCOPE_DEFAULT:
+      // requester's scope is unknown: DIRECT request (no transport codes), or code matched no Region.
+      // un-scoped would be dropped at hop 0 by repeaters running flood.max.unscoped=0
+      sendFloodScoped(default_scope, packet, delay_millis, path_hash_size);
+      break;
+    case mesh::REPLY_SCOPE_NONE:
       sendFlood(packet, delay_millis, path_hash_size);  // send un-scoped
-    }
-  } else {
-    sendFlood(packet, delay_millis, path_hash_size);  // send un-scoped
+      break;
   }
 }
 
 bool MyMesh::allowPacketForward(const mesh::Packet *packet) {
   if (_prefs.disable_fwd) return false;
-  if (packet->isRouteFlood()) {
-    if (packet->getPathHashCount() >= _prefs.flood_max) return false;
-    if (packet->getRouteType() == ROUTE_TYPE_FLOOD && packet->getPathHashCount() >= _prefs.flood_max_unscoped) return false;
-    if (packet->getPayloadType() == PAYLOAD_TYPE_ADVERT && packet->getPathHashCount() >= _prefs.flood_max_advert) return false;
+  if (packet->isRouteFlood()
+      && mesh::isFloodHopLimitExceeded(packet, _prefs.flood_max, _prefs.flood_max_unscoped, _prefs.flood_max_advert)) {
+    return false;
   }
   if (packet->isRouteFlood() && recv_pkt_region == NULL) {
     MESH_DEBUG_PRINTLN("allowPacketForward: unknown transport code, or wildcard not allowed for FLOOD packet");
@@ -549,8 +556,7 @@ uint32_t MyMesh::getDirectRetransmitDelay(const mesh::Packet *packet) {
   return getRNG()->nextInt(0, 5*t + 1);
 }
 
-bool MyMesh::filterRecvFloodPacket(mesh::Packet* pkt) {
-  // just try to determine region for packet (apply later in allowPacketForward())
+mesh::DispatcherAction MyMesh::onRecvPacket(mesh::Packet* pkt) {
   if (pkt->getRouteType() == ROUTE_TYPE_TRANSPORT_FLOOD) {
     recv_pkt_region = region_map.findMatch(pkt, REGION_DENY_FLOOD);
   } else if (pkt->getRouteType() == ROUTE_TYPE_FLOOD) {
@@ -562,8 +568,7 @@ bool MyMesh::filterRecvFloodPacket(mesh::Packet* pkt) {
   } else {
     recv_pkt_region = NULL;
   }
-  // do normal processing
-  return false;
+  return Mesh::onRecvPacket(pkt);
 }
 
 void MyMesh::onAnonDataRecv(mesh::Packet *packet, const uint8_t *secret, const mesh::Identity &sender,
@@ -576,7 +581,7 @@ void MyMesh::onAnonDataRecv(mesh::Packet *packet, const uint8_t *secret, const m
     data[len] = 0;  // ensure null terminator
     uint8_t reply_len;
 
-    reply_path_len = -1;
+    reply_path_len = 0xFF;
     if (data[4] == 0 || data[4] >= ' ') {   // is password, ie. a login request
       reply_len = handleLoginReq(sender, secret, timestamp, &data[4], packet->isRouteFlood());
     } else if (data[4] == ANON_REQ_TYPE_REGIONS && packet->isRouteDirect()) {
@@ -591,18 +596,29 @@ void MyMesh::onAnonDataRecv(mesh::Packet *packet, const uint8_t *secret, const m
 
     if (reply_len == 0) return;   // invalid request
 
-    if (packet->isRouteFlood()) {
+    // a DIRECT login can reply via the stored out_path, as onPeerDataRecv() does for REQ
+    ClientInfo* client = acl.getClient(sender.pub_key, PUB_KEY_SIZE);
+    bool have_out_path = client != NULL && client->out_path_len != OUT_PATH_UNKNOWN;
+
+    auto route = mesh::chooseReplyRoute(packet->isRouteFlood(), reply_path_len != 0xFF, have_out_path);
+
+    if (route == mesh::REPLY_ROUTE_PATH_RETURN) {
       // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the response
       mesh::Packet* path = createPathReturn(sender, secret, packet->path, packet->path_len,
                                             PAYLOAD_TYPE_RESPONSE, reply_data, reply_len);
       if (path) sendFloodReply(path, SERVER_RESPONSE_DELAY, packet->getPathHashSize());
-    } else if (reply_path_len < 0) {
-      mesh::Packet* reply = createDatagram(PAYLOAD_TYPE_RESPONSE, sender, secret, reply_data, reply_len);
-      if (reply) sendFloodReply(reply, SERVER_RESPONSE_DELAY, packet->getPathHashSize());
+      return;
+    }
+
+    mesh::Packet* reply = createDatagram(PAYLOAD_TYPE_RESPONSE, sender, secret, reply_data, reply_len);
+    if (reply == NULL) return;
+
+    if (route == mesh::REPLY_ROUTE_DIRECT_SUPPLIED) {
+      sendDirect(reply, reply_path, reply_path_len, SERVER_RESPONSE_DELAY);
+    } else if (route == mesh::REPLY_ROUTE_DIRECT_OUT_PATH) {
+      sendDirect(reply, client->out_path, client->out_path_len, SERVER_RESPONSE_DELAY);
     } else {
-      mesh::Packet* reply = createDatagram(PAYLOAD_TYPE_RESPONSE, sender, secret, reply_data, reply_len);
-      uint8_t path_len = ((reply_path_hash_size - 1) << 6) | (reply_path_len & 63);
-      if (reply) sendDirect(reply, reply_path,  path_len, SERVER_RESPONSE_DELAY);
+      sendFloodReply(reply, SERVER_RESPONSE_DELAY, packet->getPathHashSize());
     }
   }
 }
@@ -634,48 +650,75 @@ static bool isShare(const mesh::Packet *packet) {
   return false;
 }
 
+static const uint32_t MIN_VALID_TS = 1577836800; // 2020-01-01 UTC
+static const uint32_t MAX_VALID_TS = 2524608000; // 2050-01-01 UTC
+
 void MyMesh::tryTimeSyncFromBuf() {
-  static const uint32_t MIN_VALID_TS    = 1577836800; // 2020-01-01 UTC
-  static const uint32_t MAX_VALID_TS    = 2524608000; // 2050-01-01 UTC
   static const uint32_t DRIFT_THRESHOLD = 120;
   static const uint32_t MAX_JUMP        = 36000;
   static const uint32_t CLUSTER_WINDOW  = 60;
+  static const uint32_t SAMPLE_MAX_AGE  = 86400;  // ignore anything older than a day
 
   uint32_t current = getRTCClock()->getCurrentTime();
-  // fast mode only if clock is not reliable (no HW RTC chip) AND never synced via adverts
-  bool unset = !getRTCClock()->isTimeReliable() && (_ts_sync_count == 0);
-  int n = unset ? min(_ts_buf_count, 5) : min(_ts_buf_count, 10);
-  int quorum = unset ? 3 : 7;
-  if (_ts_buf_count < quorum) return;
+  unsigned long now_millis = millis();
 
-  // copy last n samples (ring buffer, most recent first going backwards)
-  uint32_t tmp[10];
-  for (int i = 0; i < n; i++) {
-    int idx = (_ts_buf_pos - 1 - i + 10) % 10;
-    tmp[i] = _ts_buf[idx].ts;
+  // Age every sample forward to "now": a peer that said T, N seconds ago, is
+  // claiming T+N now. Without this, adverts that arrived minutes or hours apart
+  // could never fall inside CLUSTER_WINDOW, so a quiet mesh (where nodes advert
+  // only a few times a day) would never reach a quorum at all.
+  struct Aged { uint32_t ts; uint32_t pub_hash; };
+  // Drop expired samples from the ring as we go, so the buffer reflects what is
+  // actually usable rather than filling up with entries nobody can use.
+  Aged aged[TS_BUF_SIZE];
+  int n = 0;
+  int kept = 0;
+  for (int i = 0; i < _ts_buf_count; i++) {
+    uint32_t age = (uint32_t)((now_millis - _ts_buf[i].rx_millis) / 1000);
+    if (age > SAMPLE_MAX_AGE) continue;   // too old to say anything useful
+    if (kept != i) _ts_buf[kept] = _ts_buf[i];
+    kept++;
+    aged[n].ts = _ts_buf[i].ts + age;
+    aged[n].pub_hash = _ts_buf[i].pub_hash;
+    n++;
   }
-  // insertion sort
+  if (kept != _ts_buf_count) {
+    _ts_buf_count = kept;
+    _ts_buf_pos = kept % TS_BUF_SIZE;
+  }
+
+  // The quorum counts distinct peers, not raw samples: one peer adverting
+  // repeatedly must not be able to move our clock on its own.
+  bool unset = (!getRTCClock()->isTimeReliable() || _ts_restored_from_flash) && (_ts_sync_count == 0);
+  int quorum = unset ? 2 : 3;
+  if (n < quorum) return;
+
+  // sort by timestamp (insertion sort, n is small)
   for (int i = 1; i < n; i++) {
-    uint32_t key = tmp[i];
+    Aged key = aged[i];
     int j = i - 1;
-    while (j >= 0 && tmp[j] > key) { tmp[j+1] = tmp[j]; j--; }
-    tmp[j+1] = key;
+    while (j >= 0 && aged[j].ts > key.ts) { aged[j+1] = aged[j]; j--; }
+    aged[j+1] = key;
   }
-  // find densest cluster: slide a CLUSTER_WINDOW across sorted samples
-  int best_count = 0, best_start = 0;
-  for (int i = 0; i < n; i++) {
-    int cnt = 0;
-    for (int j = i; j < n && tmp[j] - tmp[i] <= CLUSTER_WINDOW; j++) cnt++;
-    if (cnt > best_count) { best_count = cnt; best_start = i; }
-  }
-  int count = best_count;
-  if (count > _ts_best_cluster) _ts_best_cluster = count;
-  if (count < quorum) return;
 
-  // median of the winning cluster
-  int cluster_end = best_start;
-  while (cluster_end < n && tmp[cluster_end] - tmp[best_start] <= CLUSTER_WINDOW) cluster_end++;
-  uint32_t median = tmp[(best_start + cluster_end) / 2];
+  // Find the window holding the most DISTINCT peers.
+  int best_peers = 0, best_start = 0, best_end = 0;
+  for (int i = 0; i < n; i++) {
+    int end_idx = i;
+    while (end_idx < n && aged[end_idx].ts - aged[i].ts <= CLUSTER_WINDOW) end_idx++;
+    int peers = 0;
+    for (int a = i; a < end_idx; a++) {
+      bool dup = false;
+      for (int b = i; b < a; b++) {
+        if (aged[b].pub_hash == aged[a].pub_hash) { dup = true; break; }
+      }
+      if (!dup) peers++;
+    }
+    if (peers > best_peers) { best_peers = peers; best_start = i; best_end = end_idx; }
+  }
+  if (best_peers > _ts_best_cluster) _ts_best_cluster = best_peers;
+  if (best_peers < quorum) return;
+
+  uint32_t median = aged[(best_start + best_end) / 2].ts;
 
   auto applySync = [&](uint32_t ts, int32_t adj) {
     LocationProvider* gps = sensors.getLocationProvider();
@@ -684,11 +727,13 @@ void MyMesh::tryTimeSyncFromBuf() {
       MESH_DEBUG_PRINTLN("TimeSync: GPS re-sync requested (quorum drift %ld sec)", (long)adj);
     } else {
       getRTCClock()->setCurrentTime(ts);
-      MESH_DEBUG_PRINTLN("TimeSync: clock set, adj %ld sec (quorum %d/%d)", (long)adj, count, n);
+      MESH_DEBUG_PRINTLN("TimeSync: clock set, adj %ld sec (%d peers)", (long)adj, best_peers);
     }
     _ts_last_adj = adj;
     _ts_last_sync = ts;
     _ts_sync_count++;
+    _ts_restored_from_flash = false;   // now backed by a real quorum
+    saveClockToFile();                 // keep the corrected time across reboots
   };
 
   if (unset) {
@@ -705,16 +750,14 @@ void MyMesh::onAdvertRecv(mesh::Packet *packet, const mesh::Identity &id, uint32
                           const uint8_t *app_data, size_t app_data_len) {
   mesh::Mesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len); // chain to super impl
 
-  static const uint32_t MIN_VALID_TS = 1577836800;
-  static const uint32_t MAX_VALID_TS = 2524608000;
   _ts_advert_count++;
   if (timestamp > MIN_VALID_TS && timestamp < MAX_VALID_TS) {
     _ts_valid_count++;
     uint32_t pub_hash;
     memcpy(&pub_hash, id.pub_key, 4);
-    _ts_buf[_ts_buf_pos] = { timestamp, pub_hash };
-    _ts_buf_pos = (_ts_buf_pos + 1) % 10;
-    if (_ts_buf_count < 10) _ts_buf_count++;
+    _ts_buf[_ts_buf_pos] = { timestamp, pub_hash, millis() };
+    _ts_buf_pos = (_ts_buf_pos + 1) % TS_BUF_SIZE;
+    if (_ts_buf_count < TS_BUF_SIZE) _ts_buf_count++;
     tryTimeSyncFromBuf();
   }
 
@@ -947,13 +990,13 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   set_radio_at = revert_radio_at = 0;
   _logging = false;
   region_load_active = false;
+  recv_pkt_region = NULL;
 
 #if MAX_NEIGHBOURS
   memset(neighbours, 0, sizeof(neighbours));
 #endif
 
   // defaults
-  memset(&_prefs, 0, sizeof(_prefs));
   _prefs.airtime_factor = 1.0;
   _prefs.rx_delay_base = 0.0f;   // turn off by default, was 10.0;
   _prefs.tx_delay_factor = 0.5f; // was 0.25f
@@ -967,12 +1010,14 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   _prefs.bw = LORA_BW;
   _prefs.cr = LORA_CR;
   _prefs.tx_power_dbm = LORA_TX_POWER;
+  _prefs.path_hash_mode = PATH_HASH_MODE;
   _prefs.advert_interval = 1;        // default to 2 minutes for NEW installs
   _prefs.flood_advert_interval = 47; // 47 hours
   _prefs.flood_max = 64;
   _prefs.flood_max_unscoped = 64;
   _prefs.flood_max_advert = 8;
   _prefs.interference_threshold = 0; // disabled
+  _prefs.cad_enabled = 0;            // hardware CAD before TX (off by default; 'set cad on')
 
   // bridge defaults
   _prefs.bridge_enabled = 1;    // enabled
@@ -997,6 +1042,8 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   _prefs.rx_boosted_gain = 1; // enabled by default;
 #endif
 #endif
+  _prefs.radio_fem_rxgain = 1;
+  _prefs.radio_fem_txgain = 0;
 
   pending_discover_tag = 0;
   pending_discover_until = 0;
@@ -1004,11 +1051,116 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   memset(default_scope.key, 0, sizeof(default_scope.key));
 }
 
+#define CLOCK_FILE           "/clock"
+#define CLOCK_SAVE_INTERVAL  21600000   // 6 hours -- flash is only the backstop
+                                        // for a power cycle, so write it rarely
+
+#if defined(ESP32)
+// Survives esp_restart()/watchdog/deep-sleep (but not a power cycle), and costs
+// no flash wear at all, so the scheduled reboot never loses the clock.
+#include <esp_attr.h>
+#define CLOCK_RTCMEM_MAGIC 0x434c4b31u   // "CLK1"
+static RTC_NOINIT_ATTR uint32_t rtcmem_magic;
+static RTC_NOINIT_ATTR uint32_t rtcmem_time;
+#endif
+
+// Nodes without an RTC chip lose the time on every reboot, and a repeater that
+// reboots unattended (or on a scheduled reboot) would come back up with the
+// built-in placeholder date until enough neighbours agree on the real time.
+// Persisting the clock keeps it roughly right across reboots, and the restored
+// value is then corrected by the usual quorum sync.
+void MyMesh::restoreClockFromFile() {
+  uint32_t saved = 0;
+
+#if defined(ESP32)
+  // RTC memory survives a reboot, so it is usually the freshest copy.
+  if (rtcmem_magic == CLOCK_RTCMEM_MAGIC) {
+    saved = rtcmem_time;
+  }
+#endif
+
+  // Always consult the stored copy as well: after a reset that kept the clock
+  // running the RTC already looks reliable, but the file may still hold a
+  // newer value, and the larger of the two is the one to trust.
+  {
+    if (_fs->exists(CLOCK_FILE)) {
+#if defined(RP2040_PLATFORM)
+      File f = _fs->open(CLOCK_FILE, "r");
+#else
+      File f = _fs->open(CLOCK_FILE);
+#endif
+      if (f) {
+        uint32_t from_file = 0;
+        if (f.read((uint8_t *)&from_file, sizeof(from_file)) == sizeof(from_file)
+            && from_file > saved) {
+          saved = from_file;
+        }
+        f.close();
+      }
+    }
+  }
+  if (saved == 0) return;
+
+  // Only accept a sane value, and never move the clock backwards.
+  if (saved > MIN_VALID_TS && saved < MAX_VALID_TS && saved > getRTCClock()->getCurrentTime()) {
+    getRTCClock()->setCurrentTime(saved);
+    // The restored value is only as fresh as the last save before power-off, so
+    // it is a starting point, not a synced clock: leave the sync state untouched
+    // so the first quorum is still treated as an initial set (and is not blocked
+    // by MAX_JUMP if the node was powered down for a long time).
+    _ts_restored_from_flash = true;
+    _ts_restore_base = saved;
+    _ts_restore_millis = millis();
+    MESH_DEBUG_PRINTLN("Clock restored from flash: %u", (unsigned)saved);
+  }
+}
+
+// Cheap, wear-free checkpoint: call this often.
+void MyMesh::checkpointClock() {
+#if defined(ESP32)
+  // Only a clock that was actually set counts. The built-in placeholder date is
+  // inside the valid range, so a range check alone would happily persist it.
+  // A value restored from storage is not re-persisted either: it is only as
+  // fresh as the last save, and rewriting it would keep an arbitrarily stale
+  // clock alive across reboots until a quorum finally confirms one.
+  if (!getRTCClock()->isTimeReliable() || _ts_restored_from_flash) return;
+  uint32_t now = getRTCClock()->getCurrentTime();
+  if (now > MIN_VALID_TS && now < MAX_VALID_TS) {
+    rtcmem_time = now;
+    rtcmem_magic = CLOCK_RTCMEM_MAGIC;
+  }
+#endif
+}
+
+void MyMesh::saveClockToFile() {
+  // Never persist the placeholder, nor re-persist a value that only came back
+  // from storage and has not been confirmed by a quorum or set by hand.
+  if (!getRTCClock()->isTimeReliable() || _ts_restored_from_flash) return;
+  uint32_t now = getRTCClock()->getCurrentTime();
+  if (now <= MIN_VALID_TS || now >= MAX_VALID_TS) return;   // nothing worth saving
+
+  checkpointClock();
+
+#if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
+  _fs->remove(CLOCK_FILE);
+  File f = _fs->open(CLOCK_FILE, FILE_O_WRITE);
+#elif defined(RP2040_PLATFORM)
+  File f = _fs->open(CLOCK_FILE, "w");
+#else
+  File f = _fs->open(CLOCK_FILE, "w", true);
+#endif
+  if (!f) return;
+
+  f.write((const uint8_t *)&now, sizeof(now));
+  f.close();
+}
+
 void MyMesh::begin(FILESYSTEM *fs) {
   mesh::Mesh::begin();
   _fs = fs;
   // load persisted prefs
   _cli.loadPrefs(_fs);
+  restoreClockFromFile();
   acl.load(_fs, self_id);
   // TODO: key_store.begin();
   region_map.load(_fs);
@@ -1045,6 +1197,8 @@ void MyMesh::begin(FILESYSTEM *fs) {
   radio_driver.setRxBoostedGainMode(_prefs.rx_boosted_gain);
   MESH_DEBUG_PRINTLN("RX Boosted Gain Mode: %s",
                      radio_driver.getRxBoostedGainMode() ? "Enabled" : "Disabled");
+  board.setLoRaFemLnaEnabled(_prefs.radio_fem_rxgain);
+  board.setLoRaFemPaGainEnabled(_prefs.radio_fem_txgain);
 
   updateAdvertTimer();
   updateFloodAdvertTimer();
@@ -1142,9 +1296,13 @@ void MyMesh::setTxPower(int8_t power_dbm) {
   radio_driver.setTxPower(power_dbm);
 }
 
-#if defined(USE_SX1262) || defined(USE_SX1268)
-void MyMesh::setRxBoostedGain(bool enable) {
-  radio_driver.setRxBoostedGainMode(enable);
+bool MyMesh::setRxBoostedGain(bool enable) {
+  return radio_driver.setRxBoostedGainMode(enable);
+}
+
+#if defined(USE_LR2021)
+bool MyMesh::configSideDetectors(const uint8_t sideDetSFs[], uint8_t num, float bw) {
+  return radio_driver.configSideDetectors(sideDetSFs, num, bw);
 }
 #endif
 
@@ -1336,19 +1494,19 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     DateTime dt(now);
     if (_ts_sync_count == 0) {
       bool unset_mode = !getRTCClock()->isTimeReliable();
-      sprintf(reply, "TimeSync: no sync yet\nAdverts: %lu rx / %lu valid\nBuf: %d/10 (best cluster: %d/%d need %d)\nClock: %02d:%02d:%02d %d-%02d-%02d UTC",
+      sprintf(reply, "TimeSync: no sync yet\nAdverts: %lu rx / %lu valid\nBuf: %d/%d (best: %d peers, need %d)\nClock: %02d:%02d:%02d %d-%02d-%02d UTC",
         (unsigned long)_ts_advert_count, (unsigned long)_ts_valid_count,
-        _ts_buf_count, _ts_best_cluster, min(_ts_buf_count, unset_mode ? 5 : 10), unset_mode ? 3 : 7,
+        _ts_buf_count, (int)TS_BUF_SIZE, _ts_best_cluster, unset_mode ? 2 : 3,
         dt.hour(), dt.minute(), dt.second(), dt.year(), dt.month(), dt.day());
     } else {
       uint32_t ago = now > _ts_last_sync ? now - _ts_last_sync : 0;
       DateTime ls(_ts_last_sync);
-      sprintf(reply, "TimeSync: %lu syncs\nLast: %02d:%02d %d-%02d-%02d UTC (%lus ago)\nAdj: %+lds\nAdverts: %lu rx / %lu valid\nBuf: %d/10\nClock: %02d:%02d:%02d %d-%02d-%02d UTC",
+      sprintf(reply, "TimeSync: %lu syncs\nLast: %02d:%02d %d-%02d-%02d UTC (%lus ago)\nAdj: %+lds\nAdverts: %lu rx / %lu valid\nBuf: %d/%d (best: %d peers)\nClock: %02d:%02d:%02d %d-%02d-%02d UTC",
         (unsigned long)_ts_sync_count,
         ls.hour(), ls.minute(), ls.year(), ls.month(), ls.day(),
         (unsigned long)ago, (long)_ts_last_adj,
         (unsigned long)_ts_advert_count, (unsigned long)_ts_valid_count,
-        _ts_buf_count, dt.hour(), dt.minute(), dt.second(), dt.year(), dt.month(), dt.day());
+        _ts_buf_count, (int)TS_BUF_SIZE, _ts_best_cluster, dt.hour(), dt.minute(), dt.second(), dt.year(), dt.month(), dt.day());
     }
   } else if (memcmp(command, "discover.neighbors", 18) == 0) {
     const char* sub = command + 18;
@@ -1359,6 +1517,9 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
       sendNodeDiscoverReq();
       strcpy(reply, "OK - Discover sent");
     }
+  } else if (strcmp(command, "help") == 0 || strcmp(command, "?") == 0) {
+    strcpy(reply, "setperm, get acl, discover.neighbors");
+    _cli.appendCommonHelp(reply, 155);
   } else{
     _cli.handleCommand(sender_timestamp, command, reply);  // common CLI commands
   }
@@ -1370,6 +1531,38 @@ void MyMesh::loop() {
 #endif
 
   mesh::Mesh::loop();
+
+  // Frequent, wear-free checkpoint into RTC memory; the flash copy is only the
+  // backstop for a power cycle and is written far less often.
+  if (_time_chk_at == 0) {
+    _time_chk_at = futureMillis(60000);
+  } else if (millisHasNowPassed(_time_chk_at)) {
+    // A restored clock only ever ticks forward with uptime. If it has moved by
+    // more than that, something set it (CLI, companion app, GPS), so it is no
+    // longer merely a restored value and may be persisted again.
+    if (_ts_restored_from_flash) {
+      uint32_t expected = _ts_restore_base + (uint32_t)((millis() - _ts_restore_millis) / 1000);
+      uint32_t t = getRTCClock()->getCurrentTime();
+      uint32_t diff = (t > expected) ? t - expected : expected - t;
+      if (diff > 120) _ts_restored_from_flash = false;
+    }
+    checkpointClock();
+    // The clock can also be set by hand over CLI, which is a rare event worth
+    // one flash write: persist the first plausible time we ever see, so it is
+    // not lost on the next power cycle.
+    if (!_clock_persisted && getRTCClock()->isTimeReliable() && !_ts_restored_from_flash) {
+      saveClockToFile();
+      _clock_persisted = true;
+    }
+    _time_chk_at = futureMillis(60000);
+  }
+
+  if (_time_save_at == 0) {
+    _time_save_at = futureMillis(CLOCK_SAVE_INTERVAL);
+  } else if (millisHasNowPassed(_time_save_at)) {
+    saveClockToFile();
+    _time_save_at = futureMillis(CLOCK_SAVE_INTERVAL);
+  }
 
   if (next_flood_advert && millisHasNowPassed(next_flood_advert)) {
     mesh::Packet *pkt = createSelfAdvert();

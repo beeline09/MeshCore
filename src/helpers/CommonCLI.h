@@ -6,6 +6,7 @@
 #include <helpers/SensorManager.h>
 #include <helpers/ClientACL.h>
 #include <helpers/RegionMap.h>
+#include <helpers/ConfigSerializer.h>
 
 #if defined(WITH_RS232_BRIDGE) || defined(WITH_ESPNOW_BRIDGE)
 #define WITH_BRIDGE
@@ -55,13 +56,18 @@ public:
     // no op by default
   };
 
-  virtual void setRxBoostedGain(bool enable) {
-    // no op by default
+  virtual bool setRxBoostedGain(bool enable) {
+    return false; // CommonCLI reports unsupported if not overridden by wrapper
   };
 
   virtual void formatTimesyncReply(char* reply) {
     strcpy(reply, "not supported");
   }
+  #if defined(USE_LR2021)
+  virtual bool configSideDetectors(const uint8_t sideDetSFs[], uint8_t num, float bw) {
+    return false; // Override in wrapper
+  } 
+  #endif
 };
 
 class CommonCLI {
@@ -91,7 +97,14 @@ public:
       : _board(&board), _rtc(&rtc), _sensors(&sensors), _region_map(nullptr), _acl(nullptr), _prefs(prefs), _callbacks(callbacks) { }
 
   void loadPrefs(FILESYSTEM* _fs);
-  void savePrefs(FILESYSTEM* _fs);
+  bool savePrefs(FILESYSTEM* _fs);
   void handleCommand(uint32_t sender_timestamp, char* command, char* reply);
+
+  // Appends the names of the commands handled by CommonCLI (i.e. available on
+  // every role) to `reply`, after any role-specific text already in it, bounded
+  // by `cap` bytes. region/gps are listed only when actually supported by this
+  // build/node, so each role's `help` lists only commands it can execute.
+  void appendCommonHelp(char* reply, size_t cap);
+
   uint8_t buildAdvertData(uint8_t node_type, uint8_t* app_data);
 };

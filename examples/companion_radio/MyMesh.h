@@ -8,14 +8,14 @@
 #define FIRMWARE_VER_CODE 13
 
 #ifndef FIRMWARE_BUILD_DATE
-#define FIRMWARE_BUILD_DATE "6 Jun 2026"
+#define FIRMWARE_BUILD_DATE "14 Aug 2026"
 #endif
 
 #ifndef FIRMWARE_VERSION
   #ifdef GIT_COMMIT
-    #define FIRMWARE_VERSION "v1.16.0-" GIT_COMMIT
+    #define FIRMWARE_VERSION "v1.17.1-" GIT_COMMIT
   #else
-    #define FIRMWARE_VERSION "v1.16.0"
+    #define FIRMWARE_VERSION "v1.17.1"
   #endif
 #endif
 
@@ -140,6 +140,7 @@ public:
 protected:
   float getAirtimeBudgetFactor() const override;
   int getInterferenceThreshold() const override;
+  bool getCADEnabled() const override;
   int calcRxDelay(float score, uint32_t air_time) const override;
   uint32_t getRetransmitDelay(const mesh::Packet *packet) override;
   uint32_t getDirectRetransmitDelay(const mesh::Packet *packet) override;
@@ -193,7 +194,16 @@ protected:
   // DataStoreHost methods
   bool onContactLoaded(const ContactInfo& contact) override { return addContact(contact); }
   bool getContactForSave(uint32_t idx, ContactInfo& contact) override { return getContactByIdx(idx, contact); }
-  bool onChannelLoaded(uint8_t channel_idx, const ChannelDetails& ch) override { return setChannel(channel_idx, ch); }
+  bool onChannelLoaded(uint8_t channel_idx, const ChannelDetails& ch) override {
+    // A stored record without a name is just a free slot. Loading it would call
+    // setChannel(), which pulls num_channels up to channel_idx + 1: /channels2
+    // holds up to MAX_GROUP_CHANNELS records, so num_channels ended up pinned at
+    // MAX_GROUP_CHANNELS and addChannel("TerminalCLI") returned NULL forever.
+    // Nodes that saved their channel list before the CLI existed stayed without
+    // the channel. Empty records keep the slot empty without touching the count.
+    if (!ch.name[0]) return true;
+    return setChannel(channel_idx, ch);
+  }
   bool getChannelForSave(uint8_t channel_idx, ChannelDetails& ch) override { return getChannel(channel_idx, ch); }
 
   void clearPendingReqs() {
@@ -201,7 +211,11 @@ protected:
   }
 
 public:
-  void savePrefs() { _store->savePrefs(_prefs, sensors.node_lat, sensors.node_lon); }
+  void savePrefs() {
+    _prefs.node_lat = sensors.node_lat;
+    _prefs.node_lon = sensors.node_lon;
+    _store->savePrefs(_prefs);
+  }
   void deferSavePrefs();   // schedule flash write to happen outside of BLE connection
 
 #ifdef WITH_COMPANION_CLI
@@ -280,6 +294,13 @@ private:
 
   void checkCLIRescueCmd();
   void checkSerialInterface();
+  // True while the connected app still has frames to receive: queued in the
+  // transport, or waiting in the offline queue for its next SYNC_NEXT_MESSAGE.
+  bool hasUndeliveredAppFrames() const;
+  // Postpone a due reboot/power-off while those frames drain, re-arming
+  // action_at. Bounded by APP_DRAIN_GRACE_MILLIS so an app that never syncs
+  // cannot defer the action indefinitely.
+  bool deferForAppDrain(unsigned long& action_at);
   bool isValidClientRepeatFreq(uint32_t f) const;
 
   // helpers, short-cuts
@@ -353,6 +374,7 @@ private:
   unsigned long          _pending_reboot_deadline = 0;
   unsigned long          _pending_poweroff_at = 0;
   unsigned long          _pending_poweroff_deadline = 0;
+  unsigned long          _app_drain_until = 0;      // 0 = no drain window open
 
   bool sendGroupMessageWithCyr2LatMap(uint32_t timestamp, mesh::GroupChannel& channel, const char* sender_name,
                                       const char* text, int text_len, const char* original_text,
@@ -370,7 +392,7 @@ private:
 
   void handleRemoteCLI(const ContactInfo& from, uint32_t sender_ts, const char* cmd);
   void handleTerminalCLI(uint8_t ch_idx, uint32_t sender_ts, const char* cmd,
-                         bool write_ack, bool mirror_ui_reply);
+                         bool mirror_ui_reply);
   void sendCliReplyPM(const ContactInfo& to, const char* buf);
   void sendCliReplyChannel(uint8_t ch_idx, const char* buf, bool mirror_ui = false);
   void injectChannelMsg(uint8_t ch_idx, const char* sender_name, uint8_t path_len, int8_t snr_x4, uint32_t ts, const char* text);
