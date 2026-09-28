@@ -132,6 +132,9 @@ class HomeScreen : public UIScreen {
 #if UI_SENSORS_PAGE == 1
     SENSORS,
 #endif
+#if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+    DISCOVERY,
+#endif
     SETTINGS,
     SHUTDOWN,
     Count    // keep as last
@@ -145,6 +148,11 @@ class HomeScreen : public UIScreen {
   bool _shutdown_init;
   int _clock_pm_pending;   // PMs queued for inline display on CLOCK page
   AdvertPath recent[UI_RECENT_LIST_SIZE];
+#if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+  DiscoveredNode discovered[UI_RECENT_LIST_SIZE];
+  uint32_t discovery_req_time = 0;
+  bool discovery_disp_names = true; // имена, если известны; иначе hex (и полный SNR)
+#endif
 
   bool          _in_settings    = false;
   int           _settings_sel   = 0;
@@ -722,6 +730,44 @@ public:
       }
       // No auto-scroll: offset is controlled manually via KEY_UP / KEY_DOWN
 #endif
+#if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+    } else if (_page == HomePage::DISCOVERY) {
+      int count = the_mesh.getDiscoveredNodes(discovered, UI_RECENT_LIST_SIZE);
+      display.setColor(UIColor::primary_txt);
+      display.setTextSize(hdr_size);
+      int y = content_y;
+      for (int i = 0; i < count; i++, y += line_h) {
+        char name[32];
+        auto a = &discovered[i];
+        if ((a->name[0] == 0) || !discovery_disp_names) {
+          mesh::Utils::toHex(name, a->pubkey_prefix, 4);
+        } else {
+          strncpy(name, a->name, 32);
+          name[31] = 0;
+        }
+        char filtered_name[sizeof(name)];
+        char snr_s[12];
+        if (strlen(name) <= 8) {
+          sprintf(snr_s, "%02.1f>%02.1f", a->snr_out, a->snr_in);
+        } else {
+          sprintf(snr_s, "%02.1f", a->snr_in);
+        }
+        int snr_width = display.getTextWidth(snr_s);
+        int max_name_width = display.width() - snr_width - 1;
+        display.translateUTF8ToBlocks(filtered_name, name, sizeof(filtered_name));
+        display.drawTextEllipsized(0, y, max_name_width, filtered_name);
+        display.setCursor(display.width() - snr_width - 1, y);
+        display.print(snr_s);
+      }
+      if (millis() < discovery_req_time + 5000) {
+        return 1000; // чаще обновлять сразу после запроса
+      } else if (count < UI_RECENT_LIST_SIZE - 1) {
+        display.setTextSize(hdr_size);
+        display.drawTextCentered(display.width() / 2,
+                                 display.height() - 8 * hdr_size - 2,
+                                 "discover: " PRESS_LABEL);
+      }
+#endif
     } else if (_page == HomePage::SETTINGS) {
       display.setTextSize(hdr_size);
 #ifdef WITH_WIFI_SWITCHING
@@ -1172,6 +1218,19 @@ public:
     if (c == KEY_ENTER && _page == HomePage::SENSORS) {
       _task->toggleGPS();
       next_sensors_refresh=0;
+      return true;
+    }
+#endif
+#if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+    if (c == KEY_ENTER && _page == HomePage::DISCOVERY) {
+      if (millis() > discovery_req_time + 5000) {
+        the_mesh.requestRepeatersDiscovery();
+        discovery_req_time = millis();
+      }
+      return true;
+    }
+    if (c == KEY_SELECT && _page == HomePage::DISCOVERY) {
+      discovery_disp_names = !discovery_disp_names;
       return true;
     }
 #endif

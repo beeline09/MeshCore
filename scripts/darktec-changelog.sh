@@ -17,6 +17,7 @@ fi
 
 PATHS=(
   variants/darktec
+  examples/companion_radio
   scripts/darktec-changelog.sh
   scripts/build-darktec-ondemand.sh
   scripts/build-darktec-matrix.sh
@@ -73,7 +74,7 @@ ours_re = re.compile(
     r"кириллиц|зарядк|защит\w*\s+бата|battery protect|adc/?off|"
     r"ADVERT_NAME|advert_name|LORA_\*|OLED от|OLED и не гасить|"
     r"VBAT|SoftDevice|EU868|human changelog|Versioned releases|"
-    r"Darktec UF2|UF2 matrix|матриц",
+    r"Darktec UF2|UF2 matrix|матриц|Discover",
     re.I,
 )
 

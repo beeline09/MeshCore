@@ -102,6 +102,16 @@ struct AdvertPath {
   uint8_t path[MAX_PATH_SIZE];
 };
 
+#if defined(DISPLAY_CLASS) && !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+struct DiscoveredNode {
+  uint8_t pubkey_prefix[9];
+  float snr_in;
+  float snr_out;
+  char name[32];
+  uint8_t type;
+};
+#endif
+
 class MyMesh : public BaseChatMesh, public DataStoreHost {
 public:
   TimeSyncHelper _ts;
@@ -130,6 +140,10 @@ public:
   void enterCLIRescue();
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);
+#if defined(DISPLAY_CLASS) && !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+  bool requestRepeatersDiscovery();
+  int getDiscoveredNodes(DiscoveredNode nodes[], int max_num);
+#endif
   TimeSource getTimeSource() const { return _time_source; }
   uint32_t getTimeSyncCount() const { return _ts._sync_count; }
   uint32_t getTimeLastSync() const { return _ts._last_sync; }
@@ -359,6 +373,19 @@ private:
 
   #define ADVERT_PATH_TABLE_SIZE   16
   AdvertPath advert_paths[ADVERT_PATH_TABLE_SIZE]; // circular table
+
+#if defined(DISPLAY_CLASS) && !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
+  #ifdef UI_RECENT_LIST_SIZE
+    #define DISCOVERED_NODES_TABLE_SIZE UI_RECENT_LIST_SIZE
+  #else
+    #define DISCOVERED_NODES_TABLE_SIZE 4
+  #endif
+  DiscoveredNode discovered_nodes[DISCOVERED_NODES_TABLE_SIZE]; // не кольцевой: поздние ответы не вытесняют ранние
+  uint32_t disc_node_req_tag = 0;
+  uint32_t disc_nodes_count = 0;
+
+  void checkControlDataForPendingDiscovery(uint8_t payload[], size_t p_len);
+#endif
 
   struct Cyr2LatChannelMap {
     uint8_t transformed_hash[MAX_HASH_SIZE];
