@@ -15,11 +15,11 @@ static const int kDotS = 3;
 static const int kDotY = (64 - kDotS) / 2;  // 30, середина 64px OLED; X не трогаем
 
 void DarktecDisplay::paintStatusDot(bool on) {
-  setColor(on ? LIGHT : DARK);
+  setColor(on ? UIColor::title_txt : UIColor::window_bkg);
   fillRect(kDotX, kDotY, kDotS, kDotS);
 }
 
-void DarktecDisplay::startFrame(Color bkg) {
+void DarktecDisplay::startFrame(ColorVal bkg) {
   _in_frame = true;
   _main_ui = false;
   SSD1306Display::startFrame(bkg);
@@ -64,10 +64,10 @@ void DarktecDisplay::endFrame() {
       const int iconX = width() - iconW - 5;
       const int iconY = 0;
 
-      setColor(DARK);
+      setColor(UIColor::window_bkg);
       fillRect(iconX + 8, iconY + 1, 8, 8);
 
-      setColor(LIGHT);
+      setColor(UIColor::title_txt);
       const int ox = iconX + 9;
       const int oy = iconY + 1;
       fillRect(ox + 3, oy + 0, 2, 2);
@@ -76,7 +76,7 @@ void DarktecDisplay::endFrame() {
       fillRect(ox + 2, oy + 5, 2, 1);
       fillRect(ox + 1, oy + 6, 2, 2);
 
-      setColor(LIGHT);
+      setColor(UIColor::title_txt);
       drawRect(iconX, iconY, iconW, iconH);
       fillRect(iconX + iconW, iconY + (iconH / 4), 3, iconH / 2);
     }

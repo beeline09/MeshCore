@@ -14,7 +14,7 @@ class DarktecDisplay : public SSD1306Display {
 
 public:
   bool isOn() override;
-  void startFrame(Color bkg = DARK) override;
+  void startFrame(ColorVal bkg = UIColor::window_bkg) override;
   void drawRect(int x, int y, int w, int h) override;
   void endFrame() override;
 };
