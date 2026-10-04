@@ -74,7 +74,7 @@ ours_re = re.compile(
     r"кириллиц|зарядк|защит\w*\s+бата|battery protect|adc/?off|"
     r"ADVERT_NAME|advert_name|LORA_\*|OLED от|OLED и не гасить|"
     r"VBAT|SoftDevice|EU868|human changelog|Versioned releases|"
-    r"Darktec UF2|UF2 matrix|матриц|Discover",
+    r"Darktec UF2|UF2 matrix|матриц|Discover|гиберн|SYSTEMOFF",
     re.I,
 )
 

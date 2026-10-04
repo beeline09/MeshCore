@@ -123,7 +123,6 @@ public:
       return 0;
   }
 
-  // Не sd_power_system_off(): на Darktec нет пробуждения по VBAT из SYSTEMOFF.
-  // Оба режима защиты: ADC sleep/wake (см. DarktecBoard.cpp / DarktecAdcPower.h).
+  // Hibernate / CLI: SYSTEMOFF. Защита батареи — ADC-wait в initiateShutdown.
   void powerOff() override;
 };

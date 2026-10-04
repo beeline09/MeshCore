@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <math.h>
+#include <nrf_gpio.h>
 
 #include "DarktecBoard.h"
 
@@ -27,10 +28,26 @@ void DarktecBoard::initiateShutdown(uint8_t reason) {
 #endif
 
 void DarktecBoard::powerOff() {
-  // SYSTEMOFF на Darktec не поднимается от VBAT через buck-boost.
-  // Даже в режиме OFF ручной/CLI powerOff идёт в ADC-wait по делителю
-  // батареи. Авто-cutoff при OFF отключён отдельно (нет AUTO_SHUTDOWN / bootlock).
-  darktec::waitForBatteryRecovery(*this, SX126X_POWER_EN);
+  // Hibernate / CLI — SYSTEMOFF, как у Rogovogor.
+  // ADC-wait только для защиты батареи (initiateShutdown LOW_VOLTAGE/BOOT_PROTECT).
+#ifdef PIN_USER_BTN
+  while (digitalRead(PIN_USER_BTN) == LOW) {
+    delay(10);
+  }
+#endif
+
+  shutdownPeripherals();
+  digitalWrite(SX126X_POWER_EN, LOW);
+
+#ifdef PIN_USER_BTN
+  nrf_gpio_cfg_sense_input(g_ADigitalPinMap[PIN_USER_BTN], NRF_GPIO_PIN_PULLUP, NRF_GPIO_PIN_SENSE_LOW);
+#endif
+
+#ifdef NRF52_POWER_MANAGEMENT
+  enterSystemOff(SHUTDOWN_REASON_USER);
+#else
+  NRF52Board::powerOff();
+#endif
 }
 
 void DarktecBoard::begin() {
