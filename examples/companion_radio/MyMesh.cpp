@@ -340,6 +340,20 @@ void MyMesh::removeOfflineQueueHead() {
   }
 }
 
+// Canonical queue frames are stored in the v3 layout (SNR + two reserved bytes).
+// A legacy app (< v3) gets the collapse here: rewrite the code (16->7, 17->8)
+// and drop the three bytes after it. Returns the new length, or 0 when the
+// frame is not a v3 text-message frame (caller keeps it as-is).
+int MyMesh::convertV3FrameToLegacy(const uint8_t* src, int len, uint8_t* dst) const {
+  if (!src || !dst || len < 4) return 0;
+  const uint8_t code = src[0];
+  if (code != RESP_CODE_CONTACT_MSG_RECV_V3 && code != RESP_CODE_CHANNEL_MSG_RECV_V3) return 0;
+  dst[0] = (code == RESP_CODE_CONTACT_MSG_RECV_V3) ? RESP_CODE_CONTACT_MSG_RECV
+                                                   : RESP_CODE_CHANNEL_MSG_RECV;
+  memmove(dst + 1, src + 4, (size_t)(len - 4));
+  return len - 3;
+}
+
 float MyMesh::getAirtimeBudgetFactor() const {
   return _prefs.airtime_factor;
 }
@@ -526,14 +540,12 @@ ContactInfo*  MyMesh::processAck(const uint8_t *data) {
 void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packet *pkt,
                           uint32_t sender_timestamp, const uint8_t *extra, int extra_len, const char *text) {
   int i = 0;
-  if (app_target_ver >= 3) {
-    out_frame[i++] = RESP_CODE_CONTACT_MSG_RECV_V3;
-    out_frame[i++] = (int8_t)(pkt->getSNR() * 4);
-    out_frame[i++] = 0; // reserved1
-    out_frame[i++] = 0; // reserved2
-  } else {
-    out_frame[i++] = RESP_CODE_CONTACT_MSG_RECV;
-  }
+  // Queue in the canonical v3 layout regardless of the connected app; a legacy
+  // app (< v3) gets the v3 -> legacy collapse at delivery (CMD_SYNC_NEXT_MESSAGE).
+  out_frame[i++] = RESP_CODE_CONTACT_MSG_RECV_V3;
+  out_frame[i++] = (int8_t)(pkt->getSNR() * 4);
+  out_frame[i++] = 0; // reserved1
+  out_frame[i++] = 0; // reserved2
   memcpy(&out_frame[i], from.id.pub_key, 6);
   i += 6; // just 6-byte prefix
   // The app gets the packed byte (low 6 bits = hop count, top 2 = hash size - 1),
@@ -685,14 +697,11 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
     else if (r == TsSyncResult::CLOCK) noteTimeSource(TIME_SOURCE_ADVERT);
   }
   int i = 0;
-  if (app_target_ver >= 3) {
-    out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
-    out_frame[i++] = (int8_t)(pkt->getSNR() * 4);
-    out_frame[i++] = 0; // reserved1
-    out_frame[i++] = 0; // reserved2
-  } else {
-    out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV;
-  }
+  // Queue in the canonical v3 layout (see queueMessage).
+  out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
+  out_frame[i++] = (int8_t)(pkt->getSNR() * 4);
+  out_frame[i++] = 0; // reserved1
+  out_frame[i++] = 0; // reserved2
 
   uint8_t channel_idx = findChannelIdx(channel);
   {
@@ -1747,8 +1756,12 @@ void MyMesh::handleCmdFrame(size_t len) {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
     }
   } else if (cmd_frame[0] == CMD_SYNC_NEXT_MESSAGE) {
-    const int out_len = getNextAppFrame(out_frame);
+    int out_len = getNextAppFrame(out_frame);
     if (out_len > 0) {
+      if (app_target_ver < 3) {
+        const int legacy_len = convertV3FrameToLegacy(out_frame, out_len, out_frame);
+        if (legacy_len > 0) out_len = legacy_len;
+      }
       _serial->writeFrame(out_frame, out_len);
 #ifdef DISPLAY_CLASS
       if (_ui) _ui->msgRead(offline_queue_len);
@@ -2781,7 +2794,8 @@ void MyMesh::sendCliReplyPM(const ContactInfo& to, const char* buf) {
 void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf, bool mirror_ui) {
   static cli_reply::Chunks chunks;
   static char text[200];
-  const size_t frame_header_size = app_target_ver >= 3 ? 11 : 8;
+  // Canonical v3 frame; a legacy app gets the v3 -> legacy collapse at delivery.
+  const size_t frame_header_size = 11;
   const size_t chunk_capacity = cli_reply::channelChunkCapacity(
       MAX_FRAME_SIZE, frame_header_size, strlen(_prefs.node_name), strlen(buf));
   if (cli_reply::split(buf, chunk_capacity, chunks) != cli_reply::SplitResult::Ok) {
@@ -2813,14 +2827,10 @@ void MyMesh::sendCliReplyChannel(uint8_t ch_idx, const char* buf, bool mirror_ui
     }
 
     int fi = 0;
-    if (app_target_ver >= 3) {
-      out_frame[fi++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
-      out_frame[fi++] = 0;  // SNR (synthetic)
-      out_frame[fi++] = 0;  // reserved
-      out_frame[fi++] = 0;  // reserved
-    } else {
-      out_frame[fi++] = RESP_CODE_CHANNEL_MSG_RECV;
-    }
+    out_frame[fi++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
+    out_frame[fi++] = 0;  // SNR (synthetic)
+    out_frame[fi++] = 0;  // reserved
+    out_frame[fi++] = 0;  // reserved
     out_frame[fi++] = ch_idx;
     out_frame[fi++] = 0; // synthetic local reply, 0 LoRa hops
     out_frame[fi++] = TXT_TYPE_PLAIN;

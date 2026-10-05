@@ -324,6 +324,10 @@ private:
   void updateContactFromFrame(ContactInfo &contact, uint32_t& last_mod, const uint8_t *frame, int len);
   void addToOfflineQueue(const uint8_t frame[], int len, uint8_t compat_flags = 0);
   void removeOfflineQueueHead();
+  // Canonical queue frames are stored in the v3 layout (SNR + two reserved
+  // bytes). Collapse a v3 text-message frame to the legacy layout for apps
+  // older than v3. Returns the new length, or 0 when not a v3 text frame.
+  int convertV3FrameToLegacy(const uint8_t* src, int len, uint8_t* dst) const;
   int getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) override { 
     return _store->getBlobByKey(key, key_len, dest_buf);
   }
