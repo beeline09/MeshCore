@@ -396,6 +396,35 @@ private:
   uint8_t _app_sync_next_part = 0;
   uint32_t _app_sync_timestamp = 0;
 
+  // Raw RX frames (snr/rssi + raw packet) heard while no app was attached are
+  // buffered so a client can still attach the message route (LogRxData) after it
+  // reconnects. Only channel payloads are kept: the client holds the channel key
+  // and decrypts the frame itself, so the route is its to show. The ring evicts
+  // the oldest entry when full and refuses to replay entries older than the TTL.
+  // Set RAWFEED_DEBUG=1 to trace what the ring keeps and hands over; keep it off
+  // for builds whose Serial port carries the companion protocol.
+  #ifndef RAWFEED_DEBUG
+    #define RAWFEED_DEBUG 0
+  #endif
+  #if RAWFEED_DEBUG
+    #define RAWFEED_LOG(...) Serial.printf("rawfeed: " __VA_ARGS__)
+  #else
+    #define RAWFEED_LOG(...) {}
+  #endif
+  #define RAW_FEED_RING_SLOTS 8
+  #define RAW_FEED_DATA_MAX (MAX_TRANS_UNIT + 2)       // [snr][rssi][raw packet]
+  #define RAW_FEED_TTL_MILLIS (6UL * 60UL * 60UL * 1000UL)
+  struct RawFeedEntry {
+    uint32_t at_ms;
+    uint16_t len;
+    uint8_t data[RAW_FEED_DATA_MAX];
+  };
+  RawFeedEntry raw_feed_ring[RAW_FEED_RING_SLOTS];
+  uint8_t raw_feed_next;   // write cursor
+  uint8_t raw_feed_len;    // buffered entries
+  void bufferRawFeed(float snr, float rssi, const uint8_t* raw, int len);
+  bool emitBufferedRawFeed();   // true when one frame was handed to the app
+
   struct AckTableEntry {
     unsigned long msg_sent;
     uint32_t ack;

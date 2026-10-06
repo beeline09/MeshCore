@@ -392,6 +392,12 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
     log_raw = mapped;
     log_len = mapped_len;
   }
+  if (!_serial || !_serial->isConnected()) {
+    // No app attached right now: keep the frames a client can turn into a
+    // message route (LogRxData) once it reconnects.
+    bufferRawFeed(snr, rssi, log_raw, log_len);
+    return;
+  }
   if (_serial->isConnected() && log_len + 3 <= MAX_FRAME_SIZE) {
     int i = 0;
     out_frame[i++] = PUSH_CODE_LOG_RX_DATA;
@@ -402,6 +408,120 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
 
     _serial->writeFrame(out_frame, i);
   }
+}
+
+// Where the payload starts inside a raw packet, or -1 when it is malformed.
+// Layout: [header][transport codes x4?][path_len][path bytes][payload]
+static int rawPacketPayloadOffset(const uint8_t* raw, int len) {
+  if (!raw || len < 2) return -1;
+  int i = 1;
+  const uint8_t route_type = raw[0] & PH_ROUTE_MASK;
+  if (route_type == ROUTE_TYPE_TRANSPORT_FLOOD || route_type == ROUTE_TYPE_TRANSPORT_DIRECT) {
+    i += 4;
+  }
+  if (i >= len) return -1;
+  const uint8_t path_len_raw = raw[i++];
+  if (path_len_raw == 0xFF) return i;   // direct route: its path is consumed on the way
+  if (!mesh::Packet::isValidPathLen(path_len_raw)) return -1;
+  i += ((path_len_raw >> 6) + 1) * (path_len_raw & 63);
+  return (i <= len) ? i : -1;
+}
+
+// How many path bytes a raw packet carries, or -1 when it is malformed.
+static int rawPacketPathBytes(const uint8_t* raw, int len) {
+  const int payload = rawPacketPayloadOffset(raw, len);
+  if (payload < 0) return -1;
+  int header = 2;   // header + path_len byte
+  const uint8_t route_type = raw[0] & PH_ROUTE_MASK;
+  if (route_type == ROUTE_TYPE_TRANSPORT_FLOOD || route_type == ROUTE_TYPE_TRANSPORT_DIRECT) {
+    header += 4;
+  }
+  return payload - header;
+}
+
+// Keep a raw RX frame for replay after the app reconnects. The payload type sits
+// in bits 2-5 of the packet header, so no full parse is needed here; non-message
+// traffic (acks, adverts, traces, ...) is dropped so the ring only holds frames a
+// client can turn into a message with its route.
+void MyMesh::bufferRawFeed(float snr, float rssi, const uint8_t* raw, int len) {
+  if (!raw || len <= 0) return;
+  const uint8_t payload_type = (raw[0] >> 2) & 0x0F;
+  // Channel payloads only: the client holds the channel key, so it decrypts the
+  // frame itself and turns it into a message together with its route. A direct
+  // message's payload is encrypted with the peer secret, which only the node has.
+  if (payload_type != PAYLOAD_TYPE_GRP_TXT &&
+      payload_type != PAYLOAD_TYPE_GRP_DATA) {
+    return;
+  }
+  if (len > MAX_TRANS_UNIT) len = MAX_TRANS_UNIT;
+
+  // One transmission is heard once per route it travels: the sender's own copy
+  // plus one per relay. The payload is identical across those copies and only
+  // the path grows, so keep a single entry per transmission — the copy carrying
+  // the most route — instead of spending the ring on duplicates.
+  const int new_payload = rawPacketPayloadOffset(raw, len);
+  const int new_path_bytes = rawPacketPathBytes(raw, len);
+  if (new_payload >= 0 && new_path_bytes >= 0 && raw_feed_len > 0) {
+    const uint8_t tail = (uint8_t)((raw_feed_next + RAW_FEED_RING_SLOTS - raw_feed_len) %
+                                   RAW_FEED_RING_SLOTS);
+    for (uint8_t k = 0; k < raw_feed_len; k++) {
+      RawFeedEntry& old = raw_feed_ring[(uint8_t)((tail + k) % RAW_FEED_RING_SLOTS)];
+      const uint8_t* old_raw = &old.data[2];
+      const int old_len = (int)old.len - 2;
+      const int old_payload = rawPacketPayloadOffset(old_raw, old_len);
+      if (old_payload < 0) continue;
+      const int old_payload_len = old_len - old_payload;
+      if (old_payload_len <= 0 || old_payload_len != len - new_payload) continue;
+      if (memcmp(&old_raw[old_payload], &raw[new_payload], (size_t)old_payload_len) != 0) continue;
+      if (rawPacketPathBytes(old_raw, old_len) >= new_path_bytes) {   // kept copy is at least as good
+        RAWFEED_LOG("dup skip len=%u kept_path=%d new_path=%d\n",
+                    (unsigned)len, rawPacketPathBytes(old_raw, old_len), new_path_bytes);
+        return;
+      }
+      RAWFEED_LOG("dup replace len=%u path %d->%d\n",
+                  (unsigned)len, rawPacketPathBytes(old_raw, old_len), new_path_bytes);
+      old.at_ms = millis();                                                // replace, keep FIFO position
+      old.data[0] = (uint8_t)(int8_t)(snr * 4);
+      old.data[1] = (uint8_t)(int8_t)rssi;
+      memcpy(&old.data[2], raw, (size_t)len);
+      old.len = (uint16_t)(len + 2);
+      return;
+    }
+  }
+
+  RawFeedEntry& slot = raw_feed_ring[raw_feed_next];
+  slot.at_ms = millis();
+  slot.data[0] = (uint8_t)(int8_t)(snr * 4);
+  slot.data[1] = (uint8_t)(int8_t)rssi;
+  memcpy(&slot.data[2], raw, (size_t)len);
+  slot.len = (uint16_t)(len + 2);
+  raw_feed_next = (uint8_t)((raw_feed_next + 1) % RAW_FEED_RING_SLOTS);
+  if (raw_feed_len < RAW_FEED_RING_SLOTS) raw_feed_len++;
+  RAWFEED_LOG("stored type=%u len=%u ring=%u\n",
+              (unsigned)payload_type, (unsigned)len, (unsigned)raw_feed_len);
+}
+
+// Hand one buffered raw frame to the app; entries past the TTL are discarded so
+// a stale packet is never replayed as a fresh message.
+bool MyMesh::emitBufferedRawFeed() {
+  if (raw_feed_len == 0) return false;
+  const uint8_t tail = (uint8_t)((raw_feed_next + RAW_FEED_RING_SLOTS - raw_feed_len) %
+                                 RAW_FEED_RING_SLOTS);
+  RawFeedEntry& slot = raw_feed_ring[tail];
+  raw_feed_len--;
+  if (millis() - slot.at_ms > RAW_FEED_TTL_MILLIS) return false;   // too old to replay
+  uint8_t frame[RAW_FEED_DATA_MAX + 1];
+  frame[0] = PUSH_CODE_LOG_RX_DATA;
+  memcpy(&frame[1], slot.data, slot.len);
+  const uint16_t frame_len = (uint16_t)(slot.len + 1);
+  RAWFEED_LOG("emit len=%u left=%u age_ms=%lu\n",
+              (unsigned)frame_len, (unsigned)raw_feed_len,
+              (unsigned long)(millis() - slot.at_ms));
+  if (frame_len <= MAX_FRAME_SIZE) {
+    _serial->writeFrame(frame, frame_len);
+    return true;
+  }
+  return false;
 }
 
 bool MyMesh::isAutoAddEnabled() const {
@@ -1107,6 +1227,8 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _iter_started = false;
   _cli_rescue = false;
   offline_queue_len = 0;
+  raw_feed_next = 0;
+  raw_feed_len = 0;
   app_target_ver = 0;
   clearPendingReqs();
   next_ack_idx = 0;
@@ -1756,6 +1878,21 @@ void MyMesh::handleCmdFrame(size_t len) {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
     }
   } else if (cmd_frame[0] == CMD_SYNC_NEXT_MESSAGE) {
+    // Buffered raw RX frames carry the message route. A client builds the
+    // message (and its path) from the raw frame, so hand those over before any
+    // queued frame — otherwise the message is finalised without a route.
+    if (raw_feed_len > 0) {
+      RAWFEED_LOG("sync-replay left=%u\n", (unsigned)raw_feed_len);
+      emitBufferedRawFeed();
+      out_frame[0] = RESP_CODE_NO_MORE_MESSAGES;
+      _serial->writeFrame(out_frame, 1);
+      // Keep the app asking. It reads NO_MORE_MESSAGES as "nothing left" and
+      // stops polling, which would strand the rest of the feed (and the queued
+      // messages behind it). The tickle makes it request again until drained.
+      out_frame[0] = PUSH_CODE_MSG_WAITING;
+      _serial->writeFrame(out_frame, 1);
+      return;
+    }
     int out_len = getNextAppFrame(out_frame);
     if (out_len > 0) {
       if (app_target_ver < 3) {
