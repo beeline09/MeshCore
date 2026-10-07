@@ -180,6 +180,12 @@ public:
   void releasePacket(Packet* packet);
   void sendPacket(Packet* packet, uint8_t priority, uint32_t delay_millis=0);
 
+  // true while a packet is being transmitted, or the radio has not yet
+  // returned to receive mode after a TX. Callers can use this to defer
+  // long blocking work (e.g. eink render) that would stall the superloop
+  // and delay the radio's return to RX, causing inbound packets to be missed.
+  bool isRadioTxBusy() const { return outbound != NULL || !_radio->isInRecvMode(); }
+
   unsigned long getTotalAirTime() const { return total_air_time; }
   unsigned long getReceiveAirTime() const {return rx_air_time; }
   unsigned long getRemainingTxBudget() const { return tx_budget_ms; }

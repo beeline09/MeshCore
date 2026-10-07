@@ -584,6 +584,11 @@ void ST7735Display::setCursor(int x, int y) {
 }
 
 void ST7735Display::print(const char* str) {
+#ifdef CYRILLIC_SUPPORT
+  char cp[256];
+  translateUTF8ToBlocks(cp, str, sizeof(cp));
+  str = cp;
+#endif
   sprite->print(str);
 }
 
@@ -620,6 +625,11 @@ void ST7735Display::drawXbm(int x, int y, const uint8_t* bits, int w, int h) {
 }
 
 uint16_t ST7735Display::getTextWidth(const char* str) {
+#ifdef CYRILLIC_SUPPORT
+  char cp[256];
+  translateUTF8ToBlocks(cp, str, sizeof(cp));
+  str = cp;
+#endif
   return sprite->textWidth(str) / SCALE_X;
 }
 

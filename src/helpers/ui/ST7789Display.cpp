@@ -179,6 +179,12 @@ void ST7789Display::setCursor(int x, int y) {
 }
 
 void ST7789Display::print(const char* str) {
+#ifdef CYRILLIC_SUPPORT
+  // OLED RU fonts + glcd clock font are CP1251-indexed and skip UTF-8 decoding.
+  // ui-new no longer pre-translates (eink glcdfont decodes UTF-8 itself), so this
+  // driver converts UTF-8 → CP1251 at its boundary.
+  char cp[256]; translateUTF8ToBlocks(cp, str, sizeof(cp)); str = cp;
+#endif
   if (_use_v3_clock_font) {
     drawV3ClockString(_logical_x, _logical_y, str);
   } else if (_text_scale > 1) {
@@ -189,6 +195,9 @@ void ST7789Display::print(const char* str) {
 }
 
 void ST7789Display::printWordWrap(const char* str, int max_width) {
+#ifdef CYRILLIC_SUPPORT
+  char cp[256]; translateUTF8ToBlocks(cp, str, sizeof(cp)); str = cp;
+#endif
   display.drawStringMaxWidth(_x, _y, max_width*SCALE_X, str);
 }
 
@@ -224,12 +233,18 @@ void ST7789Display::drawXbm(int x, int y, const uint8_t* bits, int w, int h) {
 }
 
 uint16_t ST7789Display::getTextWidth(const char* str) {
+#ifdef CYRILLIC_SUPPORT
+  char cp[256]; translateUTF8ToBlocks(cp, str, sizeof(cp)); str = cp;
+#endif
   if (_use_v3_clock_font) return getV3ClockTextWidth(str);
   uint16_t phys_width = (_text_scale > 1) ? getScaledTextWidth(str) : display.getStringWidth(str);
   return phys_width / SCALE_X;
 }
 
 void ST7789Display::drawTextCentered(int mid_x, int y, const char* str) {
+#ifdef CYRILLIC_SUPPORT
+  char cp[256]; translateUTF8ToBlocks(cp, str, sizeof(cp)); str = cp;
+#endif
   if (_use_v3_clock_font) {
     int w = getV3ClockTextWidth(str);
     drawV3ClockString(mid_x - w / 2, y, str);

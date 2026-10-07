@@ -26,9 +26,25 @@ public:
   int height() const { return _h; }
 
   virtual void setRotation(uint8_t r) {}
+  virtual void forceFullRefresh() {}       // force full eInk refresh on next frame
+  virtual void fullRefreshAndHibernate() {} // full refresh + hibernate for clean shutdown
   virtual bool isEink() const { return false; }
   virtual bool isColorTFT() const { return false; }
   virtual void setFullRefreshSuppressed(bool s) {}
+#if defined(WITH_ASYNC_EINK)
+  // Periodic service hook for drivers that complete hardware work in stages.
+  virtual void service() {}
+  virtual bool isRefreshBusy() const { return false; }
+  // Block until that work finishes, or the deadline passes. Callers that
+  // genuinely must wait — shutdown, the boot splash, anything about to
+  // overwrite the framebuffer — go through this instead of open-coding the
+  // loop: an unbounded wait on a panel that never releases BUSY hangs the
+  // firmware outright, and there is no watchdog behind the superloop.
+  // Default is a no-op: a driver with no staged work is never busy. The bounded
+  // loop lives in the drivers that are (GxEPDDisplay) — this header is
+  // deliberately free of Arduino, and millis()/delay() are not available here.
+  virtual void waitRefreshIdle(uint32_t max_ms = 12000) { (void)max_ms; }
+#endif
   virtual bool isOn() = 0;
   virtual bool isEink() { return false; } // default to non-eink, override in eink drivers
   virtual void turnOn() = 0;

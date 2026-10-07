@@ -99,6 +99,10 @@ public:
   uint8_t  ui_max_unread_idx = 0;  // 0=16, 1=32, 2=64 messages in unread buffer
   uint8_t  ui_max_log_idx = 0;     // 0=16, 1=32, 2=64 messages in history log
   uint32_t ui_charge_uptime_base = 0; // accumulated seconds across soft-reboots
+  uint8_t  ui_mcotxt_disabled = 0;   // 0 = decode/display/convert MCOtxt
+  uint8_t  ui_mcmp_detect_off = 0;   // 0 = show/forward MCMP placeholders
+  uint8_t  ui_aeic_detect_off = 0;   // 0 = show/forward AEIC placeholders
+  uint8_t  ui_mcoimg_detect_off = 0; // 0 = show/forward MCOimg placeholders
 
 private:
   class RadioPrefs : public ConfigSerializer {
@@ -230,6 +234,10 @@ private:
       def("max_unread", _parent->ui_max_unread_idx);
       def("max_log", _parent->ui_max_log_idx);
       def("chg_uptime", _parent->ui_charge_uptime_base);
+      def("mcotxt_off", _parent->ui_mcotxt_disabled);
+      def("mcmp_det_off", _parent->ui_mcmp_detect_off);
+      def("aeic_det_off", _parent->ui_aeic_detect_off);
+      def("mcoimg_det_off", _parent->ui_mcoimg_detect_off);
     }
   public:
     UIPrefs(NodePrefs* parent) : _parent(parent) { }

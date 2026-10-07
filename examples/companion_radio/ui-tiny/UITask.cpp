@@ -209,9 +209,7 @@ public:
         int timestamp_width = display.getTextWidth(tmp);
         int max_name_width = display.width() - timestamp_width - 1;
 
-        char filtered_recent_name[sizeof(a->name)];
-        display.translateUTF8ToBlocks(filtered_recent_name, a->name, sizeof(filtered_recent_name));
-        display.drawTextEllipsized(0, y, max_name_width, filtered_recent_name);
+        display.drawTextEllipsized(0, y, max_name_width, a->name);
         display.setCursor(display.width() - timestamp_width - 1, y);
         display.print(tmp);
       }

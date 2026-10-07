@@ -39,6 +39,7 @@
 
 #include <RTClib.h>
 #include <helpers/ArduinoHelpers.h>
+#include <helpers/OptionalFeatureFlags.h>
 #include <helpers/BaseSerialInterface.h>
 #include <helpers/IdentityStore.h>
 #include <helpers/SimpleMeshTables.h>
@@ -150,6 +151,11 @@ public:
   int32_t getTimeLastAdjustment() const { return _ts._last_adj; }
   bool hasRecentAppTimeSet() const;
   const char *getTimeSourceLabel() const;
+
+  // true while a packet is being transmitted, or the radio has not yet
+  // returned to receive mode after a TX. The superloop defers blocking e-ink
+  // service() on this (see main.cpp) so the radio is not kept out of RX.
+  bool isRadioTxBusy() const { return Dispatcher::isRadioTxBusy(); }
 
 protected:
   float getAirtimeBudgetFactor() const override;
@@ -263,6 +269,39 @@ public:
   void setCyr2LatChannelsEnabled(bool enabled);
   void setCyr2LatContactsEnabled(bool enabled);
 
+  bool isMCOtxtEnabled() const {
+#ifdef WITH_MCOTXT
+    return _prefs.ui_mcotxt_disabled == 0;
+#else
+    return false;
+#endif
+  }
+  void setMCOtxtEnabled(bool enabled);
+  bool isMCMPDetectEnabled() const {
+#ifdef WITH_MCMP_DETECT
+    return _prefs.ui_mcmp_detect_off == 0;
+#else
+    return false;
+#endif
+  }
+  void setMCMPDetectEnabled(bool enabled);
+  bool isAEICDetectEnabled() const {
+#ifdef WITH_AEIC_DETECT
+    return _prefs.ui_aeic_detect_off == 0;
+#else
+    return false;
+#endif
+  }
+  void setAEICDetectEnabled(bool enabled);
+  bool isMCOimgDetectEnabled() const {
+#ifdef WITH_MCOIMG_DETECT
+    return _prefs.ui_mcoimg_detect_off == 0;
+#else
+    return false;
+#endif
+  }
+  void setMCOimgDetectEnabled(bool enabled);
+
 #ifdef WITH_WIFI_SWITCHING
   void switchCommsMode(uint8_t mode, int wifi_net_idx = 0);
   bool isWifiConnecting() const { return _wifi_connecting; }
@@ -297,8 +336,12 @@ private:
   void writeDisabledFrame();
   void writeContactRespFrame(uint8_t code, const ContactInfo &contact);
   void updateContactFromFrame(ContactInfo &contact, uint32_t& last_mod, const uint8_t *frame, int len);
-  void addToOfflineQueue(const uint8_t frame[], int len);
-  int getFromOfflineQueue(uint8_t frame[]);
+  void addToOfflineQueue(const uint8_t frame[], int len, uint8_t compat_flags = 0);
+  void removeOfflineQueueHead();
+  // Canonical queue frames are stored in the v3 layout (SNR + two reserved
+  // bytes). Collapse a v3 text-message frame to the legacy layout for apps
+  // older than v3. Returns the new length, or 0 when not a v3 text frame.
+  int convertV3FrameToLegacy(const uint8_t* src, int len, uint8_t* dst) const;
   int getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) override { 
     return _store->getBlobByKey(key, key_len, dest_buf);
   }
@@ -355,12 +398,46 @@ private:
 
   struct Frame {
     uint8_t len;
+    uint8_t compat_flags;
     uint8_t buf[MAX_FRAME_SIZE];
 
     bool isChannelMsg() const;
   };
   int offline_queue_len;
   Frame offline_queue[OFFLINE_QUEUE_SIZE];
+  bool _app_sync_active = false;
+  bool _app_sync_original_sent = false;
+  uint8_t _app_sync_next_part = 0;
+  uint32_t _app_sync_timestamp = 0;
+
+  // Raw RX frames (snr/rssi + raw packet) heard while no app was attached are
+  // buffered so a client can still attach the message route (LogRxData) after it
+  // reconnects. Only channel payloads are kept: the client holds the channel key
+  // and decrypts the frame itself, so the route is its to show. The ring evicts
+  // the oldest entry when full and refuses to replay entries older than the TTL.
+  // Set RAWFEED_DEBUG=1 to trace what the ring keeps and hands over; keep it off
+  // for builds whose Serial port carries the companion protocol.
+  #ifndef RAWFEED_DEBUG
+    #define RAWFEED_DEBUG 0
+  #endif
+  #if RAWFEED_DEBUG
+    #define RAWFEED_LOG(...) Serial.printf("rawfeed: " __VA_ARGS__)
+  #else
+    #define RAWFEED_LOG(...) {}
+  #endif
+  #define RAW_FEED_RING_SLOTS 8
+  #define RAW_FEED_DATA_MAX (MAX_TRANS_UNIT + 2)       // [snr][rssi][raw packet]
+  #define RAW_FEED_TTL_MILLIS (6UL * 60UL * 60UL * 1000UL)
+  struct RawFeedEntry {
+    uint32_t at_ms;
+    uint16_t len;
+    uint8_t data[RAW_FEED_DATA_MAX];
+  };
+  RawFeedEntry raw_feed_ring[RAW_FEED_RING_SLOTS];
+  uint8_t raw_feed_next;   // write cursor
+  uint8_t raw_feed_len;    // buffered entries
+  void bufferRawFeed(float snr, float rssi, const uint8_t* raw, int len);
+  bool emitBufferedRawFeed();   // true when one frame was handed to the app
 
   struct AckTableEntry {
     unsigned long msg_sent;
@@ -397,6 +474,12 @@ private:
   int                    _next_cyr2lat_channel_map = 0;
   bool                   _cyr2lat_channels_enabled = false;
   bool                   _cyr2lat_contacts_enabled = false;
+  // Applied only while an original offline frame is being handed to the
+  // currently connected app; the queue itself is capability-neutral.
+  bool                   _app_supports_mctxt = false;
+  bool                   _app_supports_mcmp = false;
+  bool                   _app_supports_aeic = false;
+  bool                   _app_supports_mcoimg = false;
   unsigned long          _pending_reboot_at = 0;
   unsigned long          _pending_reboot_deadline = 0;
   unsigned long          _pending_poweroff_at = 0;
@@ -407,6 +490,30 @@ private:
                                       const char* text, int text_len, const char* original_text,
                                       int original_len, bool record_map);
   int mapCyr2LatChannelRawLog(const uint8_t* raw, int len, uint8_t* mapped, int mapped_size);
+
+  bool transformCompatText(const char* text, bool has_name, char* output,
+                           size_t output_size);
+  int getNextAppFrame(uint8_t frame[]);
+  int renderCompatFramePart(const Frame& source, size_t part_index,
+                            size_t& part_count, bool& additive,
+                            uint8_t output[]);
+#ifdef WITH_AEIC_DETECT
+  struct AEICNotice {
+    bool used;
+    uint8_t channel_idx;
+    uint16_t sender_prefix;
+    uint8_t image_id;
+    uint8_t total;
+    uint32_t seen_at;
+  };
+  static const int AEIC_NOTICE_TABLE_SIZE = 8;
+  static const uint32_t AEIC_NOTICE_TTL_MILLIS = 60000;
+  AEICNotice _aeic_notices[AEIC_NOTICE_TABLE_SIZE] = {};
+  int _next_aeic_notice = 0;
+  bool markAEICNotice(uint8_t channel_idx, uint16_t sender_prefix,
+                      uint8_t image_id, uint8_t total, uint32_t now_millis);
+  void aeicSenderName(uint16_t sender_prefix, char* out, size_t out_size);
+#endif
 
 #ifdef WITH_COMPANION_CLI
   CommonCLI*             _cli = nullptr;
