@@ -1,12 +1,13 @@
 name: Build Darktec Official Firmwares
 
-# Push to dev-darktec → pointer release darktec-official-latest
+# Push to dev-darktec → versioned release darktec-official-v{BASE}bN + pointer release darktec-official-latest
+# BASE from MyMesh.h (official meshcore-dev major); N increments each push.
 # Matrix: 8 roles × 4 chem/cells = 32 builds (no battery protect).
 #
 # Parallel layout:
-#   version  → FIRMWARE_VERSION from MyMesh.h + short sha + changelog
+#   version  → VERSION v{BASE}bN (scripts/darktec-official-version.sh) + short sha + changelog
 #   build    → matrix by role (8 jobs × 4 chem)
-#   release  → gather artifacts, publish darktec-official-latest
+#   release  → gather artifacts, publish versioned release + darktec-official-latest
 
 permissions:
   contents: write
@@ -32,6 +33,7 @@ on:
       - "bin/**"
       - "scripts/build-darktec-official-matrix.sh"
       - "scripts/darktec-official-changelog.sh"
+      - "scripts/darktec-official-version.sh"
       - ".github/workflows/build-darktec-official-firmwares.yml"
       - ".github/actions/setup-build-environment/**"
 
@@ -44,33 +46,35 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       VERSION: ${{ steps.compute.outputs.VERSION }}
-      SHA: ${{ steps.compute.outputs.SHA }}
+      TAG: ${{ steps.compute.outputs.TAG }}
+      SHA: ${{ steps.sha.outputs.SHA }}
     steps:
       - name: Clone Repo
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Compute version label
+      - name: Compute Darktec official version
         id: compute
+        env:
+          FIRMWARE_REPO: beeline09/MeshCore
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: /usr/bin/env bash scripts/darktec-official-version.sh
+
+      - name: Short sha
+        id: sha
         run: |
-          set -euo pipefail
-          BASE="$(grep -E '#define[[:space:]]+FIRMWARE_VERSION' examples/companion_radio/MyMesh.h | head -1 | sed -nE 's/.*v([0-9]+\.[0-9]+\.[0-9]+).*/\1/p')"
-          BASE="${BASE:-0.0.0}"
-          SHA="$(git rev-parse --short=8 HEAD)"
-          echo "VERSION=v${BASE}" >> "$GITHUB_OUTPUT"
-          echo "SHA=${SHA}" >> "$GITHUB_OUTPUT"
-          echo "Using FIRMWARE_VERSION=v${BASE} sha=${SHA}"
+          echo "SHA=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Build changelog
         env:
-          VERSION: ${{ steps.compute.outputs.VERSION }}-${{ steps.compute.outputs.SHA }}
+          VERSION: ${{ steps.compute.outputs.VERSION }}-${{ steps.sha.outputs.SHA }}
         run: /usr/bin/env bash scripts/darktec-official-changelog.sh /tmp/darktec-official-changelog.md
 
       - name: Upload changelog
         uses: actions/upload-artifact@v7
         with:
-          name: darktec-official-meta-${{ steps.compute.outputs.VERSION }}-${{ steps.compute.outputs.SHA }}
+          name: darktec-official-meta-${{ steps.compute.outputs.VERSION }}-${{ steps.sha.outputs.SHA }}
           path: /tmp/darktec-official-changelog.md
 
   build:
@@ -125,6 +129,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.version.outputs.VERSION }}
+      TAG: ${{ needs.version.outputs.TAG }}
       SHA: ${{ needs.version.outputs.SHA }}
     steps:
       - name: Download role artifacts
@@ -152,8 +157,22 @@ jobs:
           fi
           cp -f /tmp/darktec-meta/darktec-official-changelog.md /tmp/darktec-official-changelog.md
           cd out
-          zip -9 "DarktecOff_uf2_latest.zip" DarktecOff_*_*s.uf2
+          zip -9 "DarktecOff_uf2_${VERSION}.zip" DarktecOff_*_*s.uf2
+          cp -f "DarktecOff_uf2_${VERSION}.zip" DarktecOff_uf2_latest.zip
           unzip -l DarktecOff_uf2_latest.zip
+
+      - name: Publish versioned release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Darktec official ${{ env.VERSION }}
+          body_path: /tmp/darktec-official-changelog.md
+          make_latest: false
+          fail_on_unmatched_files: true
+          files: |
+            out/DarktecOff_*_*s.uf2
+            out/DarktecOff_*_*s.zip
+            out/DarktecOff_uf2_${{ env.VERSION }}.zip
 
       - name: Update darktec-official-latest pointer
         env:
@@ -253,7 +272,7 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             /repos/beeline09/beeline09.github.io/dispatches \
             -f event_type='meshcore-release' \
-            -f client_payload[tag]='darktec-official-latest' \
+            -f client_payload[tag]='${{ env.TAG }}' \
             -f client_payload[track]='official' \
             -f client_payload[version]='${{ env.VERSION }}' \
             -f client_payload[sha]='${{ env.SHA }}'
