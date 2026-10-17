@@ -1097,16 +1097,27 @@ public:
     return (int)speed;
   }
 
-  // Обрезка хвостовых нулей: 0.400 → 0.4, 0.084 → 0.084, 0.000 → 0.0.
-  static void fmtTrimmed(char* buf, size_t len, float v, int decimals) {
-    char tmp[16];
-    snprintf(tmp, sizeof(tmp), "%.*f", decimals, (double)v);
-    char* dot = strchr(tmp, '.');
-    if (dot) {
-      char* end = tmp + strlen(tmp) - 1;
-      while (end > dot + 1 && *end == '0') *end-- = '\0';
+  // Формат по бюджету символов колонки (спека 0002, FR-11): до 3 знаков
+  // после точки, хвостовые нули срезаются, при переполнении бюджета
+  // точность снижается до влезания («11.86» -> «11.8»).
+  static void fmtFit(char* buf, size_t len, float v, int max_chars) {
+    for (int d = 3; d >= 0; d--) {
+      char tmp[16];
+      snprintf(tmp, sizeof(tmp), "%.*f", d, (double)v);
+      char* dot = strchr(tmp, '.');
+      if (dot) {
+        char* end = tmp + strlen(tmp) - 1;
+        while (end > dot + 1 && *end == '0') *end-- = '\0';
+      }
+      if ((int)strlen(tmp) <= max_chars || d == 0) {
+        // «-0.0» не бывает: у нуля минус не рисуем
+        if (tmp[0] == '-' && strtof(tmp, NULL) == 0.0f) {
+          memmove(tmp, tmp + 1, strlen(tmp + 1) + 1);
+        }
+        snprintf(buf, len, "%s", tmp);
+        return;
+      }
     }
-    snprintf(buf, len, "%s", tmp);
   }
 
   int renderInaPage(DisplayDriver& display) {
@@ -1173,11 +1184,11 @@ public:
       if (ok[ch]) {
         // Единицы (V/A/W) — в шапке, в значениях только числа.
         // Колонка V шире остальных: «3.97» не задевает линию (x=21).
-        fmtTrimmed(buf, sizeof(buf), mv[ch], 2);
+        fmtFit(buf, sizeof(buf), mv[ch], 4);
         display.drawTextRightAlign(47, y, buf);
-        fmtTrimmed(buf, sizeof(buf), ma[ch] / 1000.0f, 3);
+        fmtFit(buf, sizeof(buf), ma[ch] / 1000.0f, 5);
         display.drawTextRightAlign(85, y, buf);
-        fmtTrimmed(buf, sizeof(buf), mv[ch] * (ma[ch] / 1000.0f), 3);
+        fmtFit(buf, sizeof(buf), mv[ch] * (ma[ch] / 1000.0f), 6);
         display.drawTextRightAlign(125, y, buf);
       }
     }
@@ -1193,6 +1204,7 @@ public:
     // «full»; Idle с внешним питанием — батарея отдыхает («ext»); настоящий
     // разряд — по EMA тока батареи (меньше 10 мА — оценить нельзя, «--»).
     int mins = -1;  // <0 — оценить нельзя
+    bool approx = false;  // оценка по профилю потребления (не измерение)
     bool resting_ext = false;
     if (board.isChargeFull()) {
       mins = -2;  // маркер «full»
@@ -1202,9 +1214,25 @@ public:
     } else if (board.isExternalPowered()) {
       resting_ext = true;
     } else {
-      float ii = _bat_i_ema;
-      if (ii < 0) ii = -ii;
-      if (ii >= 10.0f) mins = (int)((soc / 100.0f * prefs.capacity_mah) / ii * 60.0f + 0.5f);
+      // Разряд: повышайка питается напрямую от аккума — ток разряда через
+      // шунт Bat НЕ течёт (замер даёт ~0, подтвердил MacMillan25). Оценка —
+      // по профилю потребления модуля (research-current-draw.md):
+      // интерполяция по напряжению батареи, экран считаем включённым.
+      const float v = batt_mv / 1000.0f;
+      static const float prof[4][3] = {
+        { 50, 59, 71 },   // 0 HT-RA62: datasheet-класс, пока строка E22P
+        { 50, 59, 71 },   // 1 E22-900M30S = E22P (derived)
+        { 50, 59, 71 },   // 2 E22P-868M30S (measured)
+        { 32, 43, 58 },   // 3 E22-900M33S (measured); экр. выкл: 25.7/37/50
+      };
+      const int mi = prefs.module < 4 ? prefs.module : 1;
+      float ii = prof[mi][0];
+      if (v < 3.7f)      ii = prof[mi][1] + (prof[mi][2] - prof[mi][1]) * (v - 3.0f) / 0.7f;
+      else if (v < 4.2f) ii = prof[mi][1] + (prof[mi][0] - prof[mi][1]) * (v - 3.7f) / 0.5f;
+      else               ii = prof[mi][0];
+      if (ii < 1.0f) ii = 1.0f;
+      mins = (int)((soc / 100.0f * prefs.capacity_mah) / ii * 60.0f + 0.5f);
+      approx = true;
     }
 
     // Треугольник направления (5×3, строками fillRect — глифов стрелок нет):
@@ -1228,23 +1256,26 @@ public:
     // разделитель и температура МК (nRF52840, кристалл ≈ ячейка).
     char ebuf[20];
     if (mins == -2) {
-      snprintf(ebuf, sizeof(ebuf), "E full");
+      snprintf(ebuf, sizeof(ebuf), "ETA full");
     } else if (resting_ext) {
-      snprintf(ebuf, sizeof(ebuf), "E ext");
+      snprintf(ebuf, sizeof(ebuf), "ETA ext");
     } else if (mins < 0) {
-      snprintf(ebuf, sizeof(ebuf), "E --");
+      snprintf(ebuf, sizeof(ebuf), "ETA --");
+    } else if (mins < 60) {
+      snprintf(ebuf, sizeof(ebuf), "ETA %dm", mins);
     } else {
-      // Полная лестница времени (spec 0002, замечание владельца): минуты →
-      // часы (до 10 ч с минутами) → часы → сутки → месяцы → годы. При
-      // слабом токе разряда оценка честно уходит в дни и месяцы.
-      // < 10 ч — с минутами; 10–24 ч — часы; 1–30 дн — дни; 1–12 мес —
-      // месяцы; больше года — годы.
+      // «ETA» влезает, если минуты показывать только до часа (дальше
+      // налезает на «SOC…»). Дни/месяцы/годы — оценка по профилю, тильда.
       const long h = mins / 60;
-      if (mins < 600)            snprintf(ebuf, sizeof(ebuf), "E %ldh%02ldm", h, (long)(mins % 60));
-      else if (h < 24)           snprintf(ebuf, sizeof(ebuf), "E %ldh", h);
-      else if (h < 24L * 30)     snprintf(ebuf, sizeof(ebuf), "E %ldd", h / 24);
-      else if (h < 24L * 365)    snprintf(ebuf, sizeof(ebuf), "E %ldmo", h / 30);
-      else                       snprintf(ebuf, sizeof(ebuf), "E %ldy", h / 365);
+      if (h < 24) {
+        snprintf(ebuf, sizeof(ebuf), approx ? "ETA ~%ldh" : "ETA %ldh", h);
+      } else if (h < 24L * 30) {
+        snprintf(ebuf, sizeof(ebuf), "ETA ~%ldd", h / 24);
+      } else if (h < 24L * 365) {
+        snprintf(ebuf, sizeof(ebuf), "ETA ~%ldmo", h / 30);
+      } else {
+        snprintf(ebuf, sizeof(ebuf), "ETA ~%ldy", h / 365);
+      }
     }
     display.setCursor(tx0 + 9, ey);
     display.print(ebuf);
