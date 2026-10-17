@@ -29,10 +29,12 @@ PATHS=(
 
 collect_log() {
   local range="$1"
+  # только свои коммиты: фильтр по автору отсекает апстрим (говогор),
+  # который тоже трогает examples/companion_radio
   {
-    git log --no-merges --pretty=format:'%s' "$range" -- "${PATHS[@]}" 2>/dev/null || true
+    git log --no-merges --pretty=format:'%s' --author='Rasul Ismailov' --author='beeline09' "$range" -- "${PATHS[@]}" 2>/dev/null || true
     echo
-    git log --no-merges --pretty=format:'%s' "$range" \
+    git log --no-merges --pretty=format:'%s' --author='Rasul Ismailov' --author='beeline09' "$range" \
       --grep='[Dd]arktec|[Oo]n-?demand|DARKTEC_|beeline09|Serial DFU web flasher' -i -E \
       2>/dev/null || true
   }
@@ -44,9 +46,9 @@ if [ -n "$PREV_TAG" ] && git rev-parse "$PREV_TAG" >/dev/null 2>&1; then
 else
   # First versioned release: Darktec-related commits only
   {
-    git log --no-merges --pretty=format:'%s' -- "${PATHS[@]}" -40 2>/dev/null || true
+    git log --no-merges --pretty=format:'%s' --author='Rasul Ismailov' --author='beeline09' -- "${PATHS[@]}" -40 2>/dev/null || true
     echo
-    git log --no-merges --pretty=format:'%s' \
+    git log --no-merges --pretty=format:'%s' --author='Rasul Ismailov' --author='beeline09' \
       --grep='[Dd]arktec|[Oo]n-?demand|DARKTEC_|beeline09' -i -E -30 \
       2>/dev/null || true
   } > /tmp/darktec-commits.txt
@@ -84,6 +86,7 @@ def classify(msg: str):
         return "Прочее", msg
     kind, rest = m.group(1).lower(), m.group(3)
     mapping = {
+        "darktec": "Новое",
         "feat": "Новое",
         "feature": "Новое",
         "fix": "Исправления",
@@ -99,6 +102,11 @@ def classify(msg: str):
         "test": "Тесты",
     }
     text = rest[:1].upper() + rest[1:] if rest else msg
+    # Никаких следов ИИ-агента в changelog: срезаем «(spec NNNN…)» и подобное.
+    text = re.sub(r"\s*\((?:spec|SDD|спека?)\s[^)]*\)", "", text, flags=re.I)
+    text = re.sub(r"\s*\((?:spec|SDD|спека?)\d+[^)]*\)", "", text, flags=re.I)
+    text = re.sub(r"\s+\(\d{4}-\d{2}-\d{2}\)$", "", text)
+    text = text.strip()
     return mapping.get(kind, "Прочее"), text
 
 seen = set()
