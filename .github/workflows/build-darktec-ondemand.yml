@@ -81,6 +81,21 @@ on:
         required: false
         type: string
         default: "1.750"
+      battery_capacity_mah:
+        description: "Cell capacity mAh for /darktec.prefs (default 4000)"
+        required: false
+        type: string
+        default: "4000"
+      radio_module:
+        description: "Radio module: 0 HT-RA62, 1 E22-900M30S, 2 E22P-868M30S, 3 E22-900M33S (default 1)"
+        required: false
+        type: string
+        default: "1"
+      charge_current_ma:
+        description: "Board charge current nominal mA (default 2000)"
+        required: false
+        type: string
+        default: "2000"
   repository_dispatch:
     types: [darktec-ondemand]
   issues:
@@ -120,6 +135,9 @@ jobs:
           INPUT_CR: ${{ github.event.inputs.lora_cr }}
           INPUT_TX: ${{ github.event.inputs.lora_tx }}
           INPUT_ADC: ${{ github.event.inputs.adc_multiplier }}
+          INPUT_CAP: ${{ github.event.inputs.battery_capacity_mah }}
+          INPUT_MOD: ${{ github.event.inputs.radio_module }}
+          INPUT_CHG: ${{ github.event.inputs.charge_current_ma }}
           DISPATCH_TRACK: ${{ github.event.client_payload.firmware_track }}
           DISPATCH_ROLE: ${{ github.event.client_payload.role_slug }}
           DISPATCH_CHEM: ${{ github.event.client_payload.chem_slug }}
@@ -133,6 +151,9 @@ jobs:
           DISPATCH_CR: ${{ github.event.client_payload.lora_cr }}
           DISPATCH_TX: ${{ github.event.client_payload.lora_tx }}
           DISPATCH_ADC: ${{ github.event.client_payload.adc_multiplier }}
+          DISPATCH_CAP: ${{ github.event.client_payload.battery_capacity_mah }}
+          DISPATCH_MOD: ${{ github.event.client_payload.radio_module }}
+          DISPATCH_CHG: ${{ github.event.client_payload.charge_current_ma }}
         run: |
           set -euo pipefail
           python3 <<'PY'
@@ -154,6 +175,9 @@ jobs:
                   "lora_cr": os.environ.get("INPUT_CR", "") or "8",
                   "lora_tx": os.environ.get("INPUT_TX", "") or "22",
                   "adc_multiplier": os.environ.get("INPUT_ADC", "") or "1.750",
+                  "battery_capacity_mah": os.environ.get("INPUT_CAP", "") or "4000",
+                  "radio_module": os.environ.get("INPUT_MOD", "") or "1",
+                  "charge_current_ma": os.environ.get("INPUT_CHG", "") or "2000",
               }
           elif event == "repository_dispatch":
               data = {
@@ -170,6 +194,9 @@ jobs:
                   "lora_cr": os.environ.get("DISPATCH_CR", "") or "8",
                   "lora_tx": os.environ.get("DISPATCH_TX", "") or "22",
                   "adc_multiplier": os.environ.get("DISPATCH_ADC", "") or "1.750",
+                  "battery_capacity_mah": os.environ.get("DISPATCH_CAP", "") or "4000",
+                  "radio_module": os.environ.get("DISPATCH_MOD", "") or "1",
+                  "charge_current_ma": os.environ.get("DISPATCH_CHG", "") or "2000",
               }
           else:
               body = os.environ.get("ISSUE_BODY") or ""
@@ -227,6 +254,9 @@ jobs:
           cr = num("lora_cr", "8", 5, 8, as_int=True)
           tx = num("lora_tx", "22", 1, 22, as_int=True)
           adc = num("adc_multiplier", "1.750", 0.5, 10.0)
+          cap = num("battery_capacity_mah", "4000", 500, 30000, as_int=True)
+          mod = num("radio_module", "1", 0, 3, as_int=True)
+          chg = num("charge_current_ma", "2000", 100, 3000, as_int=True)
 
           ROLE_MAP = {
               "companion_radio_ble": "Darktec_companion_radio_ble",
@@ -289,6 +319,9 @@ jobs:
               "lora_cr": cr,
               "lora_tx": tx,
               "adc_multiplier": adc,
+              "battery_capacity_mah": cap,
+              "radio_module": mod,
+              "charge_current_ma": chg,
           }
           print(json.dumps(out, ensure_ascii=False, indent=2))
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
@@ -340,6 +373,9 @@ jobs:
           LORA_CR: ${{ steps.req.outputs.lora_cr }}
           LORA_TX_POWER: ${{ steps.req.outputs.lora_tx }}
           ADC_MULTIPLIER: ${{ steps.req.outputs.adc_multiplier }}
+          BATTERY_CAPACITY_MAH: ${{ steps.req.outputs.battery_capacity_mah }}
+          DARKTEC_RADIO_MODULE: ${{ steps.req.outputs.radio_module }}
+          DARKTEC_CHARGE_CURRENT_MA: ${{ steps.req.outputs.charge_current_ma }}
           FIRMWARE_TRACK: ${{ steps.req.outputs.firmware_track }}
         run: |
           chmod +x scripts/build-darktec-ondemand.sh
