@@ -104,6 +104,55 @@ TEST(DarktecPrefsFormatTest, CapacityBoundaryValuesKept) {
   EXPECT_EQ(s.capacity_mah, 30000);
 }
 
+// --- spec 0002: новые настройки в байтах резерва ---
+
+TEST(DarktecPrefsFormatTest, ScreenSleepAndNoiseSpeedRoundTrip) {
+  Settings s{};
+  s.capacity_mah = 4000;
+  s.screen_sleep_chg = 1;   // позволить экрану гаснуть при зарядке
+  s.noise_speed = 3;        // 1000 мс
+  uint8_t buf[kWireSize];
+  ASSERT_EQ(serialize(s, buf, sizeof(buf)), kWireSize);
+
+  Settings out{};
+  ASSERT_TRUE(parse(buf, sizeof(buf), out));
+  EXPECT_EQ(out.screen_sleep_chg, 1);
+  EXPECT_EQ(out.noise_speed, 3);
+}
+
+TEST(DarktecPrefsFormatTest, ScreenSleepAndNoiseSpeedSanitize) {
+  Settings s{};
+  s.screen_sleep_chg = 200;  // неизвестное значение → дефолт (держать экран)
+  s.noise_speed = 9;         // неизвестная скорость → 500 мс
+  sanitize(s);
+  EXPECT_EQ(s.screen_sleep_chg, 0);
+  EXPECT_EQ(s.noise_speed, kNoiseSpeedDefault);
+}
+
+TEST(DarktecPrefsFormatTest, OldFileWithZeroReservedKeepsDefaults) {
+  // Файл, записанный прошивкой до 0002: резерв нулевой → экран держится
+  // (дефолт). Скорость графиков в старом файле = 0 (100 мс): sanitize не
+  // отличает «старый файл» от «юзер выбрал 100 мс»; дефолт 500 мс будет
+  // только у заново созданного файла. Меняется тройным нажатием.
+  Settings s{};
+  s.capacity_mah = 2500;
+  uint8_t buf[kWireSize];
+  ASSERT_EQ(serialize(s, buf, sizeof(buf)), kWireSize);
+
+  Settings out{};
+  ASSERT_TRUE(parse(buf, sizeof(buf), out));
+  EXPECT_EQ(out.screen_sleep_chg, 0);
+  EXPECT_EQ(out.noise_speed, 0);
+}
+
+TEST(DarktecPrefsFormatTest, BuildFlagDefaultsNewFields) {
+  Settings s = buildFlagDefaults();
+  // native-сборка без DARKTEC_KEEP_DISPLAY_CHG → держать экран (0),
+  // скорость графиков — дефолт 500 мс.
+  EXPECT_EQ(s.screen_sleep_chg, 0);
+  EXPECT_EQ(s.noise_speed, kNoiseSpeedDefault);
+}
+
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
