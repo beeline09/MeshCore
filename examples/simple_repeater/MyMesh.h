@@ -202,6 +202,12 @@ public:
   NodePrefs* getNodePrefs() {
     return &_prefs;
   }
+#ifdef DARKTEC
+  // spec 0002 FR-17: таблица соседей для UI репитера — копия, отсортированная
+  // по SNR (сильнейший первый); clearNeighbours() сбрасывает список.
+  int getNeighboursSorted(NeighbourInfo* out, int max_out);
+  void clearNeighbours();
+#endif
   bool isHiddenNode() const {
     return _prefs.advert_interval == 0 && _prefs.flood_advert_interval == 0;
   }

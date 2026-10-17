@@ -29,6 +29,12 @@ struct Settings {
   uint8_t cells;          // 1..2; 2 — только LTO (FR-10)
   uint8_t module;         // ModuleCode (FR-2, FR-11)
   uint16_t charge_ma;     // номинал зарядного тока платы (FR-31)
+  // --- spec 0002 (живут в байтах резерва провода; формат/версия те же) ---
+  uint8_t screen_sleep_chg;  // 0 = держать экран включенным при зарядке
+                             // (дефолт; 0 и в старых файлах), 1 = позволить
+                             // гаснуть (0002 FR-1..3)
+  uint8_t noise_speed;       // скорость графиков шума/SNR, индекс 0..3 =
+                             // 100/250/500/1000 мс, дефолт 2 (500) (0002 FR-9)
 };
 
 constexpr uint16_t kCapacityMin = 500;
@@ -41,6 +47,10 @@ constexpr uint16_t kChargeDefault = 2000;
 constexpr uint8_t kWireVersion = 1;
 constexpr uint8_t kWireSize = 20;  // magic(4) + ver(1) + payload(13) + crc(2)
 constexpr uint8_t kPayloadSize = 13;
+
+// spec 0002 (FR-9): скорость графиков шума/SNR.
+constexpr uint8_t kNoiseSpeedDefault = 2;  // 500 мс
+constexpr uint8_t kNoiseSpeedMax = 3;
 
 // Починка недопустимых значений: диапазоны и правило «2S — только LTO».
 // (объявлена до buildFlagDefaults, определение ниже по файлу)
@@ -76,6 +86,14 @@ inline Settings buildFlagDefaults() {
 #else
   s.charge_ma = kChargeDefault;
 #endif
+// spec 0002 (FR-1/FR-5): дефолт «экран при зарядке» — флагом сборки,
+// 1 = держать включенным (как всегда). 0 → позволить экрану гаснуть.
+#ifdef DARKTEC_KEEP_DISPLAY_CHG
+  s.screen_sleep_chg = (DARKTEC_KEEP_DISPLAY_CHG != 0) ? 0 : 1;
+#else
+  s.screen_sleep_chg = 0;
+#endif
+  s.noise_speed = kNoiseSpeedDefault;
   sanitize(s);
   return s;
 }
@@ -93,6 +111,10 @@ inline void sanitize(Settings& s) {
   if (s.cells < 1) s.cells = 1;
   if (s.cells > 2) s.cells = 2;
   if (s.chem != CHEM_LTO && s.cells > 1) s.cells = 1;  // US-6/FR-10
+  // spec 0002: 0 = держать экран при зарядке (дефолт, безопасное значение);
+  // неизвестные значения возвращаем к дефолту.
+  if (s.screen_sleep_chg > 1) s.screen_sleep_chg = 0;
+  if (s.noise_speed > kNoiseSpeedMax) s.noise_speed = kNoiseSpeedDefault;
 }
 
 // CRC16/CCITT-FALSE (poly 0x1021, init 0xFFFF).
@@ -123,7 +145,10 @@ inline size_t serialize(const Settings& s, uint8_t* buf, size_t len) {
   buf[9] = t.module;
   buf[10] = (uint8_t)(t.charge_ma & 0xFF);
   buf[11] = (uint8_t)(t.charge_ma >> 8);
-  for (int i = 0; i < 6; i++) buf[12 + i] = 0x00;  // резерв (FR-17)
+  // spec 0002: первые два байта резерва заняты настройками, остальные — 0.
+  buf[12] = t.screen_sleep_chg;
+  buf[13] = t.noise_speed;
+  for (int i = 0; i < 4; i++) buf[14 + i] = 0x00;  // резерв (FR-17)
   const uint16_t crc = crc16(buf + 4, 1 + kPayloadSize);
   buf[18] = (uint8_t)(crc & 0xFF);
   buf[19] = (uint8_t)(crc >> 8);
@@ -144,6 +169,8 @@ inline bool parse(const uint8_t* buf, size_t len, Settings& out) {
   s.cells = buf[8];
   s.module = buf[9];
   s.charge_ma = (uint16_t)(buf[10] | ((uint16_t)buf[11] << 8));
+  s.screen_sleep_chg = buf[12];  // spec 0002 (резерв провода)
+  s.noise_speed = buf[13];
   sanitize(s);
   out = s;
   return true;

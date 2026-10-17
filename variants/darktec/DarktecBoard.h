@@ -79,6 +79,8 @@ public:
   DarktecBoard() : NRF52Board("Darktec_OTA") {}
   void begin();
   bool isCharging();
+  // spec 0001 FR-34: автомат в фазе Full (для вилки вместо молнии).
+  bool isChargeFull();
   bool isExternalPowered() override;
   bool isLoRaActivity() const {
     return _txing || _rxing
@@ -109,6 +111,15 @@ public:
 
   uint16_t getBattMilliVolts() override {
     return readBattMvRaw();
+  }
+
+  // Спецификация 0002 FR-11: прямое чтение канала INA3221 для страницы
+  // датчиков (0 = SP, 1 = DC, 2 = Bat). false — INA недоступна.
+  bool readInaChannel(int ch, float* bus_v, float* ma) {
+    if (!_ina_ok || ch < 0 || ch > 2) return false;
+    *bus_v = _ina.getBusVoltage((uint8_t)ch);
+    *ma = _ina.getCurrentAmps((uint8_t)ch) * 1000.0f;
+    return true;
   }
 
   bool setAdcMultiplier(float multiplier) override {

@@ -23,6 +23,7 @@
 #   BATTERY_CAPACITY_MAH  cell capacity mAh → /darktec.prefs default (4000; 500–30000)
 #   DARKTEC_RADIO_MODULE  0 HT-RA62, 1 E22-900M30S, 2 E22P-868M30S, 3 E22-900M33S (default 1)
 #   DARKTEC_CHARGE_CURRENT_MA  board charge current nominal mA (2000; 100–3000)
+#   DARKTEC_KEEP_DISPLAY_CHG  1 = keep display on while charging (default), 0 = allow sleep
 #
 # Output:
 #   out/Darktec_{role}_{chem}_{cells}s_{protect}__{name_slug}__{radio_slug}[__adc{n}][__cap{n}][__mod{n}][__chg{n}]__{sha}.{uf2,zip}
@@ -92,6 +93,15 @@ if not (100 <= v <= 3000):
 print(v)
 ' "${DARKTEC_CHARGE_CURRENT_MA:-2000}")"
 
+# spec 0002 (FR-1/FR-5): 1 = держать экран включенным при зарядке (дефолт),
+# 0 = разрешить экрану гаснуть по авто-офф. Дефолт /darktec.prefs.
+DARKTEC_KEEP_DISPLAY_CHG="$(python3 -c 'import sys
+v=int(sys.argv[1])
+if v not in (0, 1):
+    raise SystemExit(f"DARKTEC_KEEP_DISPLAY_CHG must be 0 or 1: {v}")
+print(v)
+' "${DARKTEC_KEEP_DISPLAY_CHG:-1}")"
+
 radio_token() {
   printf '%s' "$1" | tr '.' 'p' | tr -cd 'A-Za-z0-9p-'
 }
@@ -114,7 +124,9 @@ if [ "$DARKTEC_RADIO_MODULE" != "$DEFAULT_MOD" ]; then MOD_SLUG="__mod${DARKTEC_
 CHG_SLUG=""
 if [ "$DARKTEC_CHARGE_CURRENT_MA" != "$DEFAULT_CHG" ]; then CHG_SLUG="__chg${DARKTEC_CHARGE_CURRENT_MA}"; fi
 
-OUT_BASE="Darktec_${DARKTEC_ROLE_SLUG}_${CHEM_SLUG}_${BATTERY_CELLS}s_${PROTECT_SLUG}__${NAME_SLUG}__${RADIO_SLUG}${ADC_SLUG}${CAP_SLUG}${MOD_SLUG}${CHG_SLUG}__${COMMIT_HASH}"
+KDC_SLUG=""
+if [ "$DARKTEC_KEEP_DISPLAY_CHG" = "0" ]; then KDC_SLUG="__kdc0"; fi
+OUT_BASE="Darktec_${DARKTEC_ROLE_SLUG}_${CHEM_SLUG}_${BATTERY_CELLS}s_${PROTECT_SLUG}__${NAME_SLUG}__${RADIO_SLUG}${ADC_SLUG}${CAP_SLUG}${MOD_SLUG}${CHG_SLUG}${KDC_SLUG}__${COMMIT_HASH}"
 
 rm -rf out
 mkdir -p out
@@ -135,14 +147,14 @@ mkdir -p "$(dirname "$DEFS_H")"
 python3 - "$DEFS_H" "${FIRMWARE_VERSION_STRING}" "${ADVERT_NAME:-}" \
   "${BATTERY_CHEMISTRY}" "${BATTERY_CELLS}" "${DARKTEC_BATT_PROTECT}" \
   "${RADIO_CUSTOM}" "${LORA_FREQ}" "${LORA_BW}" "${LORA_SF}" "${LORA_CR}" "${LORA_TX_POWER}" \
-  "${ADC_MULTIPLIER}" "${BATTERY_CAPACITY_MAH}" "${DARKTEC_RADIO_MODULE}" "${DARKTEC_CHARGE_CURRENT_MA}" <<'PY'
+  "${ADC_MULTIPLIER}" "${BATTERY_CAPACITY_MAH}" "${DARKTEC_RADIO_MODULE}" "${DARKTEC_CHARGE_CURRENT_MA}" "${DARKTEC_KEEP_DISPLAY_CHG}" <<'PY'
 import sys
 (
     path, ver, advert,
     chem, cells, protect,
     radio_custom, freq, bw, sf, cr, tx,
-    adc, cap, module, charge,
-) = sys.argv[1:17]
+    adc, cap, module, charge, kdc,
+) = sys.argv[1:18]
 
 def c_str(s: str) -> str:
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ").replace("\r", "")[:31] + '"'
@@ -170,6 +182,8 @@ lines = [
     f"#define DARKTEC_RADIO_MODULE  {module}",
     "#undef DARKTEC_CHARGE_CURRENT_MA",
     f"#define DARKTEC_CHARGE_CURRENT_MA  {charge}",
+    "#undef DARKTEC_KEEP_DISPLAY_CHG",
+    f"#define DARKTEC_KEEP_DISPLAY_CHG  {kdc}",
     "",
     "#undef FIRMWARE_VERSION",
     f"#define FIRMWARE_VERSION {c_str(ver)}",
@@ -208,7 +222,7 @@ echo "=== On-demand build ${OUT_BASE} ==="
 echo "env=${DARKTEC_PIO_ENV} chem=${BATTERY_CHEMISTRY} cells=${BATTERY_CELLS} protect=${DARKTEC_BATT_PROTECT} name=${ADVERT_NAME:-<default>}"
 echo "radio freq=${LORA_FREQ} bw=${LORA_BW} sf=${LORA_SF} cr=${LORA_CR} tx=${LORA_TX_POWER} custom=${RADIO_CUSTOM}"
 echo "adc_multiplier=${ADC_MULTIPLIER} custom=${ADC_CUSTOM}"
-echo "darktec.prefs defaults: capacity=${BATTERY_CAPACITY_MAH} mAh module=${DARKTEC_RADIO_MODULE} charge=${DARKTEC_CHARGE_CURRENT_MA} mA"
+echo "darktec.prefs defaults: capacity=${BATTERY_CAPACITY_MAH} mAh module=${DARKTEC_RADIO_MODULE} charge=${DARKTEC_CHARGE_CURRENT_MA} mA" keep_display_chg=${DARKTEC_KEEP_DISPLAY_CHG}
 echo "PLATFORMIO_BUILD_FLAGS=${PLATFORMIO_BUILD_FLAGS}"
 cat "$DEFS_H"
 

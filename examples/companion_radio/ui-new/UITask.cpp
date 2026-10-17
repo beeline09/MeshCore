@@ -14,6 +14,7 @@
 #if defined(DARKTEC) && defined(__has_include)
   #if __has_include("DarktecPrefs.h")
     #include "DarktecPrefs.h"
+    #include "DarktecPowerState.h"
     #define UI_DARKTEC_SETTINGS 1
   #endif
 #endif
@@ -197,6 +198,10 @@ class HomeScreen : public UIScreen {
 #if !(defined(UI_NO_DISCOVER_SCREEN) && (UI_NO_DISCOVER_SCREEN + 0 != 0))
     DISCOVERY,
 #endif
+#ifdef UI_DARKTEC_SETTINGS
+    NOISE,     // spec 0002: график шума/SNR
+    INA,       // spec 0002: таблица INA3221 + ETA
+#endif
     SETTINGS,
 #ifndef UI_NO_HIBERNATE
     SHUTDOWN,
@@ -234,6 +239,18 @@ class HomeScreen : public UIScreen {
   // Режим правки значения пункта (значение в [скобках]): вход — долгое
   // нажатие на пункте, клик = увеличить, двойной = уменьшить, долгое — выход.
   bool          _darktec_editing = false;
+
+  // Страницы NOISE/INA (spec 0002): кольцевые буферы графиков — 64 колонки,
+  // сэмпл ядра (кэш) раз в настраиваемый интервал; EMA тока батареи для ETA.
+  static constexpr int NOISE_SAMPLES = 64;
+  int16_t       _nf_hist[NOISE_SAMPLES] = {};   // шум, dBm
+  int16_t       _snr_hist[NOISE_SAMPLES] = {};  // SNR × 10
+  uint8_t       _noise_head = 0;
+  uint8_t       _noise_count = 0;
+  unsigned long _next_noise_sample = 0;
+  bool          _noise_show_snr = false;        // false = NoiseFloor, true = SNR
+  float         _bat_i_ema = 0;                 // ток батареи (INA CH3), мА
+  bool          _bat_i_ema_ready = false;
 #endif
   int           _pm_clock_mode  = 1;   // 0=all msgs switch screen, 1=PM inline only
 
@@ -296,10 +313,19 @@ class HomeScreen : public UIScreen {
     display.fillRect(iconX + 2, iconY + 2, fillWidth, iconHeight - 4);
 
     // while charging, show a bolt (or a plug once full) just left of the battery,
-    // keeping the fill bar itself clean and uninterrupted
+    // keeping the fill bar itself clean and uninterrupted.
+    // spec 0001 FR-34 (Darktec): индикация по автомату заряда — молния в
+    // фазе Charging, вилка в Full, в Idle (в т.ч. USB без зарядки АКБ)
+    // ничего не рисуем. Дублирующую отрисовку молнии в DarktecDisplay
+    // убрали — иконка здесь, логика наша.
     bool charging = board.isExternalPowered();
+    bool charge_full = false;
+#ifdef UI_DARKTEC_SETTINGS
+    charging = board.isCharging();
+    charge_full = board.isChargeFull();
+#endif
     if (charging) {
-      const uint8_t* symbol = (batteryPercentage < 95) ? charging_icon : plug_icon;
+      const uint8_t* symbol = (batteryPercentage < 95 && !charge_full) ? charging_icon : plug_icon;
       display.setColor(UIColor::title_txt);
       display.drawXbm(iconX - 9, iconY + 1, symbol, 8, 8);
     }
@@ -351,6 +377,9 @@ public:
   }
 
   bool isOnClockPage() const { return _page == CLOCK; }
+#ifdef UI_DARKTEC_SETTINGS
+  bool isOnNoisePage() const { return _page == NOISE; }
+#endif
   void incrementClockPM() { _clock_pm_pending++; }
   int  getPmClockMode()  const { return _pm_clock_mode; }
 
@@ -431,7 +460,7 @@ public:
     switch (page) {
 #ifdef UI_DARKTEC_SETTINGS
       case SettingsPage::ROOT:    return 6;   // + [ Darktec ]
-      case SettingsPage::DARKTEC_PAGE: return 6;   // Назад + 5 параметров
+      case SettingsPage::DARKTEC_PAGE: return 7;   // 6 параметров + Back
 #else
       case SettingsPage::ROOT:    return 5;
 #endif
@@ -503,9 +532,9 @@ public:
     }
 #ifdef UI_DARKTEC_SETTINGS
     else if (page == SettingsPage::DARKTEC_PAGE) {
-      // Своя строка выхода внизу списка (как в официалке): i==5 — "Back",
-      // пункты — i==0..4. Без стрелки: курсор ">" рядом с "<" сливается.
-      if (i == 5) return "Back";
+      // Своя строка выхода внизу списка (как в официалке): i==6 — "Back",
+      // пункты — i==0..5. Без стрелки: курсор ">" рядом с "<" сливается.
+      if (i == 6) return "Back";
       if (i == _darktec_note_item && _darktec_note[0] && millis() < _darktec_note_until) {
         return _darktec_note;
       }
@@ -514,6 +543,7 @@ public:
       if (i == 2) return "Cells";
       if (i == 3) return "Radio mod";
       if (i == 4) return "Charge, mA";
+      if (i == 5) return "Screen on chg";
     }
 #endif
     else if (i == 0) {
@@ -553,21 +583,6 @@ public:
       if (i == 3) return "AEIC";
       if (i == 4) return "MCOimg";
     }
-#ifdef UI_DARKTEC_SETTINGS
-    if (page == SettingsPage::DARKTEC_PAGE) {
-      // Свежая заметка заменяет подпись строки (FR-9..11, D-8: "after
-      // reboot"; FR-10: предупреждение про 2S). Текст — английский, как
-      // весь остальной UI прошивки.
-      if (i == _darktec_note_item && _darktec_note[0] && millis() < _darktec_note_until) {
-        return _darktec_note;
-      }
-      if (i == 1) return "Capacity, mAh";
-      if (i == 2) return "Batt type";
-      if (i == 3) return "Cells";
-      if (i == 4) return "Radio mod";
-      if (i == 5) return "Charge, mA";
-    }
-#endif
     return "";
   }
 
@@ -708,6 +723,8 @@ public:
         snprintf(raw, sizeof(raw), "%s", mod_names[s.module < 4 ? s.module : 1]);
       } else if (i == 4) {
         snprintf(raw, sizeof(raw), "%u", (unsigned)s.charge_ma);
+      } else if (i == 5) {
+        snprintf(raw, sizeof(raw), "%s", s.screen_sleep_chg ? "Off" : "On");
       }
       if (raw[0]) {
         if (_darktec_editing && _settings_sel == i) {
@@ -886,7 +903,7 @@ public:
     // Darktec (spec 0001, FR-8..11): правка /darktec.prefs, шаг ±100,
     // на краях диапазона — переход на противоположный край. Химия/ячейки/
     // модуль применяются после перезагрузки (D-8) — заметка на строке.
-    // "Back" — последняя строка (i==5), возврат в корень настроек.
+    // "Back" — последняя строка (i==6), возврат в корень настроек.
     if (page == SettingsPage::DARKTEC_PAGE) {
       DarktecPrefs::Settings s = DarktecPrefs::get();
       if (i == 0) {
@@ -922,6 +939,9 @@ public:
         if (ma < (int)DarktecPrefsFormat::kChargeMin) ma = (int)DarktecPrefsFormat::kChargeMax;
         s.charge_ma = (uint16_t)ma;
       } else if (i == 5) {
+        // Screen on chg (spec 0002 FR-1): On = держать экран при зарядке.
+        s.screen_sleep_chg = s.screen_sleep_chg ? 0 : 1;
+      } else if (i == 6) {
         // Back — возврат в корень настроек (тот же переход, что у общей
         // строки i==0 на других подстраницах).
         _settings_page = SettingsPage::ROOT;
@@ -972,6 +992,262 @@ public:
     snprintf(buf, sizeof(buf), "< %s >", AdcCalibration::actionName(c.sel));
     display.drawTextCentered(cx, y, buf);
   }
+
+#ifdef UI_DARKTEC_SETTINGS
+  // ---- Спецификация 0002: страницы NOISE и INA ----
+
+  unsigned long noiseSpeedMs() const {
+    static const unsigned long speeds[4] = { 100, 250, 500, 1000 };
+    uint8_t idx = DarktecPrefs::get().noise_speed;
+    if (idx > 3) idx = DarktecPrefsFormat::kNoiseSpeedDefault;
+    return speeds[idx];
+  }
+
+  int16_t noiseSmoothedAt(const int16_t* hist, int i) const {
+    int sum = 0, n = 0;
+    for (int k = i - 1; k <= i + 1; k++) {
+      if (k < 0 || k >= _noise_count) continue;
+      sum += hist[(_noise_head + NOISE_SAMPLES - _noise_count + k) % NOISE_SAMPLES];
+      n++;
+    }
+    return (int16_t)(n ? sum / n : 0);
+  }
+
+  // Инверсная метка внизу шум-страницы: белый блок + чёрный текст,
+  // «скругление» — срез 1 px углов цветом фона.
+  void drawNoiseLabel(DisplayDriver& display, const char* text, int x, bool selected) {
+    const int w = display.getTextWidth(text) + 2;
+    const int y = display.height() - 10;
+    if (selected) {
+      display.setColor(UIColor::primary_txt);
+      display.fillRect(x, y, w, 10);
+      display.setColor(UIColor::window_bkg);
+      display.fillRect(x, y, 1, 1);
+      display.fillRect(x + w - 1, y, 1, 1);
+      display.fillRect(x, y + 9, 1, 1);
+      display.fillRect(x + w - 1, y + 9, 1, 1);
+      display.setCursor(x + 2, y + 1);
+      display.print(text);
+    } else {
+      display.setColor(UIColor::secondary_txt);
+      display.setCursor(x + 2, y + 1);
+      display.print(text);
+    }
+  }
+
+  int renderNoisePage(DisplayDriver& display) {
+    display.setTextSize(1);
+    const unsigned long speed = noiseSpeedMs();
+    if ((long)(millis() - _next_noise_sample) >= 0) {
+      _nf_hist[_noise_head] = (int16_t)radio_driver.getNoiseFloor();
+      _snr_hist[_noise_head] = (int16_t)(radio_driver.getLastSNR() * 10.0f);
+      _noise_head = (_noise_head + 1) % NOISE_SAMPLES;
+      if (_noise_count < NOISE_SAMPLES) _noise_count++;
+      _next_noise_sample = millis() + speed;
+    }
+
+    const int16_t* hist = _noise_show_snr ? _snr_hist : _nf_hist;
+    int lo = 0, hi = 0;
+    for (int i = 0; i < _noise_count; i++) {
+      int v = noiseSmoothedAt(hist, i);
+      if (i == 0)      { lo = v; hi = v; }
+      else if (v < lo) { lo = v; }
+      else if (v > hi) { hi = v; }
+    }
+    if (hi - lo < 8) {           // плоский график не растягиваем в фейк-деталь
+      int mid = (lo + hi) / 2;
+      lo = mid - 4;
+      hi = mid + 4;
+    }
+
+    // График — всё место между точками карусели и строкой значений.
+    const int plot_y = 20;
+    const int foot_y = display.height() - 9;
+    const int plot_h = foot_y - 2 - plot_y;
+    const int bar_w = display.width() / NOISE_SAMPLES;
+
+    display.setColor(UIColor::secondary_txt);
+    display.fillRect(0, plot_y + plot_h - 1, display.width(), 1);
+
+    display.setColor(UIColor::primary_txt);
+    int prev_y = -1;
+    for (int i = 0; i < _noise_count; i++) {
+      int v = noiseSmoothedAt(hist, i);
+      int y = (plot_y + plot_h - 2) - (v - lo) * ((plot_y + plot_h - 2) - plot_y) / (hi - lo);
+      if (y < plot_y) y = plot_y;
+      if (y > (plot_y + plot_h - 2)) y = (plot_y + plot_h - 2);
+      if (prev_y < 0) {
+        display.fillRect(i * bar_w, y, bar_w, 2);
+      } else {
+        int top = (y < prev_y) ? y : prev_y;
+        int bot = (y < prev_y) ? prev_y : y;
+        display.fillRect(i * bar_w, top, bar_w, bot - top + 2);
+      }
+      prev_y = y;
+    }
+
+    char lbuf[16], rbuf[16];
+    // Без пробела после двоеточия: 10 символов на блок — между блоками
+    // остаётся зазор ~4 px (иначе сливаются).
+    snprintf(lbuf, sizeof(lbuf), "NF:%ddBm", (int)radio_driver.getNoiseFloor());
+    snprintf(rbuf, sizeof(rbuf), "SNR:%.1fdB", (double)radio_driver.getLastSNR());
+    drawNoiseLabel(display, lbuf, 0, !_noise_show_snr);
+    drawNoiseLabel(display, rbuf, display.width() - display.getTextWidth(rbuf) - 2, _noise_show_snr);
+
+    return (int)speed;
+  }
+
+  // Обрезка хвостовых нулей: 0.400 → 0.4, 0.084 → 0.084, 0.000 → 0.0.
+  static void fmtTrimmed(char* buf, size_t len, float v, int decimals) {
+    char tmp[16];
+    snprintf(tmp, sizeof(tmp), "%.*f", decimals, (double)v);
+    char* dot = strchr(tmp, '.');
+    if (dot) {
+      char* end = tmp + strlen(tmp) - 1;
+      while (end > dot + 1 && *end == '0') *end-- = '\0';
+    }
+    snprintf(buf, len, "%s", tmp);
+  }
+
+  int renderInaPage(DisplayDriver& display) {
+    display.setTextSize(1);
+
+    // Каналы INA3221: 0 = SP, 1 = DC, 2 = Bat. Клиент рисует DC и Bat
+    // (SP — на репитере); точки карусели на этой странице видны.
+    float mv[3] = { 0, 0, 0 }, ma[3] = { 0, 0, 0 };
+    bool ok[3] = { false, false, false };
+    for (int ch = 0; ch < 3; ch++) {
+      ok[ch] = board.readInaChannel(ch, &mv[ch], &ma[ch]);
+    }
+
+    // EMA тока батареи — вход ETA в разряде (FR-14).
+    if (!_bat_i_ema_ready) {
+      _bat_i_ema = ok[2] ? ma[2] : 0;
+      _bat_i_ema_ready = true;
+    } else if (ok[2]) {
+      _bat_i_ema += (ma[2] - _bat_i_ema) * 0.2f;
+    }
+
+    // Таблица: рамка, шапка 9 px, две строки по 11 px. Верх приближен к
+    // точкам карусели на 2 px (y=18).
+    const int tx = 0, ty = 18;
+    const int tw = display.width() - 1;
+    const int th = 9 + 2 * 11 + 2;
+    display.setColor(UIColor::primary_txt);
+    display.drawRect(tx, ty, tw, th);
+
+    // Шапка: инвертированная полоса (белый фон, чёрные буквы), тексты
+    // по центру ячеек. Линии сетки шапки инвертируются вместе с ней:
+    // чёрные линии между ячейками и чёрная линия под полосой.
+    display.fillRect(tx + 1, ty + 1, tw - 2, 8);
+    display.setColor(UIColor::window_bkg);
+    static const int hlines[3] = { 21, 49, 88 };
+    for (int i = 0; i < 3; i++) {
+      display.fillRect(hlines[i], ty + 1, 1, 8);
+    }
+    display.fillRect(tx + 1, ty + 9, tw - 2, 1);
+    // Надписи — чёрные, по центру своих ячеек (цвет уже window_bkg).
+    display.drawTextCentered(10, ty + 1, "CH");
+    display.drawTextCentered(35, ty + 1, "V");
+    display.drawTextCentered(68, ty + 1, "A");
+    display.drawTextCentered(107, ty + 1, "W");
+
+    display.setColor(UIColor::primary_txt);
+    display.fillRect(tx + 1, ty + 20, tw - 2, 1);   // между DC и Bat
+
+    // Вертикальные линии на границах колонок — от шапки до низа (белые,
+    // продолжают чёрные линии шапки).
+    static const int vlines[3] = { 21, 49, 88 };
+    for (int i = 0; i < 3; i++) {
+      display.fillRect(vlines[i], ty + 10, 1, th - 11);
+    }
+
+    char buf[12];
+    static const char* names[2] = { "DC", "Bat" };
+    static const int chans[2] = { 1, 2 };
+    for (int r = 0; r < 2; r++) {
+      const int y = ty + 10 + r * 11 + 1;
+      const int ch = chans[r];
+      display.setCursor(3, y);
+      display.print(ok[ch] ? names[r] : "--");
+      if (ok[ch]) {
+        // Единицы (V/A/W) — в шапке, в значениях только числа.
+        // Колонка V шире остальных: «3.97» не задевает линию (x=21).
+        fmtTrimmed(buf, sizeof(buf), mv[ch], 2);
+        display.drawTextRightAlign(47, y, buf);
+        fmtTrimmed(buf, sizeof(buf), ma[ch] / 1000.0f, 3);
+        display.drawTextRightAlign(85, y, buf);
+        fmtTrimmed(buf, sizeof(buf), mv[ch] * (ma[ch] / 1000.0f), 3);
+        display.drawTextRightAlign(125, y, buf);
+      }
+    }
+
+    // ---- ETA (FR-13/FR-14): треугольник направления + время ----
+    const int ey = ty + th + 1;
+    const uint16_t batt_mv = board.readBattMvRaw();
+    const uint8_t soc = DarktecPowerState::socPercent(batt_mv);
+    const bool charging = board.isCharging();
+    const DarktecPrefs::Settings& prefs = DarktecPrefs::get();
+
+    // spec 0002 FR-14: Charging — до полного по номиналу тока; Full —
+    // «full»; Idle с внешним питанием — батарея отдыхает («ext»); настоящий
+    // разряд — по EMA тока батареи (меньше 10 мА — оценить нельзя, «--»).
+    int mins = -1;  // <0 — оценить нельзя
+    bool resting_ext = false;
+    if (board.isChargeFull()) {
+      mins = -2;  // маркер «full»
+    } else if (charging) {
+      const float remain = (100.0f - soc) / 100.0f * prefs.capacity_mah;
+      if (prefs.charge_ma > 0) mins = (int)(remain / prefs.charge_ma * 60.0f + 0.5f);
+    } else if (board.isExternalPowered()) {
+      resting_ext = true;
+    } else {
+      float ii = _bat_i_ema;
+      if (ii < 0) ii = -ii;
+      if (ii >= 10.0f) mins = (int)((soc / 100.0f * prefs.capacity_mah) / ii * 60.0f + 0.5f);
+    }
+
+    // Треугольник направления (5×3, строками fillRect — глифов стрелок нет):
+    // вверх = заряжается, вниз = разряжается; в покое с внешним питанием и в
+    // Full — квадрат-«стойка» вместо стрелки.
+    const int tx0 = 3, ty0 = ey + 1;
+    display.setColor(UIColor::primary_txt);
+    if (charging) {
+      display.fillRect(tx0 + 2, ty0, 1, 1);
+      display.fillRect(tx0 + 1, ty0 + 1, 3, 1);
+      display.fillRect(tx0, ty0 + 2, 5, 2);
+    } else if (resting_ext || mins == -2) {
+      display.fillRect(tx0 + 1, ty0 + 1, 3, 3);
+    } else {
+      display.fillRect(tx0, ty0, 5, 2);
+      display.fillRect(tx0 + 1, ty0 + 2, 3, 1);
+      display.fillRect(tx0 + 2, ty0 + 3, 1, 1);
+    }
+
+    // «E» вместо ETA (эксперимент 17.10): экономим место, справа — SOC,
+    // разделитель и температура МК (nRF52840, кристалл ≈ ячейка).
+    char ebuf[20];
+    if (mins == -2) {
+      snprintf(ebuf, sizeof(ebuf), "E full");
+    } else if (resting_ext) {
+      snprintf(ebuf, sizeof(ebuf), "E ext");
+    } else if (mins < 0) {
+      snprintf(ebuf, sizeof(ebuf), "E --");
+    } else if (mins >= 99 * 60) {
+      snprintf(ebuf, sizeof(ebuf), "E >99h");
+    } else {
+      snprintf(ebuf, sizeof(ebuf), "E %dh%dm", mins / 60, mins % 60);
+    }
+    display.setCursor(tx0 + 9, ey);
+    display.print(ebuf);
+    display.setColor(UIColor::secondary_txt);
+    int mcu_c = (int)(board.getMCUTemperature() + 0.5f);
+    snprintf(ebuf, sizeof(ebuf), "SOC %d%%-%dC", (int)soc, mcu_c);
+    display.drawTextRightAlign(display.width() - 2, ey, ebuf);
+
+    return 1000;
+  }
+#endif  // UI_DARKTEC_SETTINGS
 
   int render(DisplayDriver& display) override {
     if (uiOverlayActive()) return uiOverlayRender(display);
@@ -1062,6 +1338,14 @@ public:
       x += 10;
     }
 
+#ifdef UI_DARKTEC_SETTINGS
+    if (_page == HomePage::NOISE) {
+      return renderNoisePage(display);
+    }
+    if (_page == HomePage::INA) {
+      return renderInaPage(display);
+    }
+#endif
     int custom_refresh = uiDrawPage((int)_page, display, content_y);
     if (custom_refresh > 0) {
       return custom_refresh;
@@ -1653,6 +1937,32 @@ public:
       }
       return true;
     }
+
+#ifdef UI_DARKTEC_SETTINGS
+    // Страница шума (spec 0002): долгое — NF↔SNR, тройное — скорость
+    // (общая для обоих графиков, хранится в /darktec.prefs). Клик/двойной
+    // проваливаются в стандартную навигацию карусели.
+    if (_page == HomePage::NOISE) {
+      if (c == KEY_ENTER) {
+        _noise_show_snr = !_noise_show_snr;
+        return true;
+      }
+      if (c == KEY_SELECT) {
+        DarktecPrefs::Settings s = DarktecPrefs::get();
+        s.noise_speed = (s.noise_speed + 1) % (DarktecPrefsFormat::kNoiseSpeedMax + 1);
+        DarktecPrefs::save(s);
+        _next_noise_sample = 0;   // следующий сэмпл — сразу с новой скоростью
+        // Всплывашка с новой скоростью — в том же стиле, что у буззера.
+        static const char* speed_labels[4] = { "100ms", "250ms", "500ms", "1000ms" };
+        uint8_t idx = s.noise_speed;
+        char msg[20];
+        snprintf(msg, sizeof(msg), "Noise: %s", speed_labels[idx]);
+        _task->showAlert(msg, 800);   // появится на ближайшей перерисовке
+        return true;
+      }
+      // остальные клавиши — листание карусели ниже по коду
+    }
+#endif
 
     // On CLOCK page: intercept navigation while PMs are being read inline
     if (_page == HomePage::CLOCK && _clock_pm_pending > 0) {
@@ -2706,6 +3016,13 @@ void UITask::loop() {
       _auto_off = millis() + AUTO_OFF_MILLIS;
     }
 #endif
+#ifdef UI_DARKTEC_SETTINGS
+    // spec 0002 FR-9: страница шума — живой прибор, панель не гаснем,
+    // пока она открыта.
+    if (home && ((HomeScreen*)home)->isOnNoisePage()) {
+      _auto_off = millis() + AUTO_OFF_MILLIS;
+    }
+#endif
     if (_clock_dim_mode == 1) {
       // OFF: no dim while on CLOCK page
       if (home && ((HomeScreen*)home)->isOnClockPage())
@@ -2772,6 +3089,13 @@ char UITask::handleDoubleClick(char c) {
 char UITask::handleTripleClick(char c) {
   MESH_DEBUG_PRINTLN("UITask: triple click triggered");
   checkDisplayOn(c);
+#ifdef UI_DARKTEC_SETTINGS
+  // spec 0002: на странице шума тройное нажатие меняет скорость графиков —
+  // буззер не трогаем, KEY_SELECT уходит на экран.
+  if (home && ((HomeScreen*)home)->isOnNoisePage()) {
+    return c;
+  }
+#endif
   toggleBuzzer();
   c = 0;
   return c;

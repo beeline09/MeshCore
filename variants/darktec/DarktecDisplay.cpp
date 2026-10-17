@@ -2,8 +2,15 @@
 
 #include "DarktecDisplay.h"
 #include "DarktecBoard.h"
+#include "DarktecPrefs.h"
 
 extern DarktecBoard board;
+
+// spec 0002 FR-3: настройка «Screen on chg» — экран при зарядке гаснет
+// только если она в положении Off (screen_sleep_chg = 1).
+bool DarktecDisplay::screenSleepAllowed() const {
+  return DarktecPrefs::get().screen_sleep_chg != 0;
+}
 
 bool DarktecDisplay::statusDotWanted() const {
   // Только эфир LoRa: TX, приём пакета, короткий хвост после. Не BLE.
@@ -33,11 +40,21 @@ void DarktecDisplay::drawRect(int x, int y, int w, int h) {
   SSD1306Display::drawRect(x, y, w, h);
 }
 
+void DarktecDisplay::turnOff() {
+  // spec 0002 FR-3: при зарядке и «Screen on chg: On» гаснуть нельзя —
+  // авто-офф (и только он: ручных путей гашения у клиента нет) глотается здесь.
+  if (board.isCharging() && !screenSleepAllowed()) {
+    return;
+  }
+  SSD1306Display::turnOff();
+}
+
 bool DarktecDisplay::isOn() {
   bool on = SSD1306Display::isOn();
   bool charging = board.isCharging();
   // KEEP_DISPLAY_ON_USB не будит погашенный OLED — только не даёт ему заснуть.
-  if (charging && !_was_charging && !on) {
+  // spec 0002: при «Screen on chg: Off» зарядка экран не будит.
+  if (charging && !_was_charging && !on && !screenSleepAllowed()) {
     turnOn();
     on = true;
   }
@@ -57,29 +74,10 @@ bool DarktecDisplay::isOn() {
 
 void DarktecDisplay::endFrame() {
   if (_main_ui) {
-    if (board.isCharging()) {
-      // Совпадает с ui-new renderBatteryIndicator: 24×10 в (width-29, 0).
-      const int iconW = 24;
-      const int iconH = 10;
-      const int iconX = width() - iconW - 5;
-      const int iconY = 0;
-
-      setColor(UIColor::window_bkg);
-      fillRect(iconX + 8, iconY + 1, 8, 8);
-
-      setColor(UIColor::title_txt);
-      const int ox = iconX + 9;
-      const int oy = iconY + 1;
-      fillRect(ox + 3, oy + 0, 2, 2);
-      fillRect(ox + 2, oy + 2, 2, 1);
-      fillRect(ox + 0, oy + 3, 6, 2);
-      fillRect(ox + 2, oy + 5, 2, 1);
-      fillRect(ox + 1, oy + 6, 2, 2);
-
-      setColor(UIColor::title_txt);
-      drawRect(iconX, iconY, iconW, iconH);
-      fillRect(iconX + iconW, iconY + (iconH / 4), 3, iconH / 2);
-    }
+    // Молнию заряда рисует ui-new renderBatteryIndicator (1.18): своя
+    // отрисовка здесь дублировала её. Убрано (spec 0002, замечание
+    // владельца) — индикация осталась та, что у роговогор, но с логикой
+    // автомата заряда (см. renderBatteryIndicator).
 
     _dot_shown = statusDotWanted();
     if (_dot_shown) {

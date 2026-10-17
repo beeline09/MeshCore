@@ -158,6 +158,11 @@ bool DarktecBoard::isCharging() {
   return _charging;
 }
 
+bool DarktecBoard::isChargeFull() {
+  pollChargeSense();
+  return g_charge.state == DarktecSocModel::ChargeState::Full;
+}
+
 bool DarktecBoard::isExternalPowered() {
   // Зарядка пакета — INA3221 CH2. USB VBUS MCU к зарядке не относится,
   // но для KEEP_DISPLAY / CLI «external» учитываем и его (DFU, кабель).

@@ -90,6 +90,28 @@ void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float sn
 #endif
 }
 
+#ifdef DARKTEC
+// spec 0002 FR-17: выгрузка соседей для страницы UI, сортировка по SNR
+// (сильнейший первый); пустые слоты (heard_timestamp == 0) не выдаются.
+int MyMesh::getNeighboursSorted(NeighbourInfo* out, int max_out) {
+  int n = 0;
+  for (int i = 0; i < MAX_NEIGHBOURS && n < max_out; i++) {
+    if (neighbours[i].heard_timestamp != 0) out[n++] = neighbours[i];
+  }
+  for (int i = 1; i < n; i++) {
+    NeighbourInfo t = out[i];
+    int j = i - 1;
+    while (j >= 0 && out[j].snr < t.snr) { out[j + 1] = out[j]; j--; }
+    out[j + 1] = t;
+  }
+  return n;
+}
+
+void MyMesh::clearNeighbours() {
+  for (int i = 0; i < MAX_NEIGHBOURS; i++) neighbours[i].heard_timestamp = 0;
+}
+#endif
+
 uint8_t MyMesh::handleLoginReq(const mesh::Identity& sender, const uint8_t* secret, uint32_t sender_timestamp, const uint8_t* data, bool is_flood) {
   ClientInfo* client = NULL;
   if (data[0] == 0) {   // blank password, just check if sender is in ACL
