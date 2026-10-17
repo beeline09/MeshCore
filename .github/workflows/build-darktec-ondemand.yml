@@ -96,6 +96,11 @@ on:
         required: false
         type: string
         default: "2000"
+      keep_display_chg:
+        description: "1 = keep display on while charging (default), 0 = allow sleep"
+        required: false
+        type: string
+        default: "1"
   repository_dispatch:
     types: [darktec-ondemand]
   issues:
@@ -138,6 +143,7 @@ jobs:
           INPUT_CAP: ${{ github.event.inputs.battery_capacity_mah }}
           INPUT_MOD: ${{ github.event.inputs.radio_module }}
           INPUT_CHG: ${{ github.event.inputs.charge_current_ma }}
+          INPUT_KDC: ${{ github.event.inputs.keep_display_chg }}
           DISPATCH_TRACK: ${{ github.event.client_payload.firmware_track }}
           DISPATCH_ROLE: ${{ github.event.client_payload.role_slug }}
           DISPATCH_CHEM: ${{ github.event.client_payload.chem_slug }}
@@ -154,6 +160,7 @@ jobs:
           DISPATCH_CAP: ${{ github.event.client_payload.battery_capacity_mah }}
           DISPATCH_MOD: ${{ github.event.client_payload.radio_module }}
           DISPATCH_CHG: ${{ github.event.client_payload.charge_current_ma }}
+          DISPATCH_KDC: ${{ github.event.client_payload.keep_display_chg }}
         run: |
           set -euo pipefail
           python3 <<'PY'
@@ -178,6 +185,7 @@ jobs:
                   "battery_capacity_mah": os.environ.get("INPUT_CAP", "") or "4000",
                   "radio_module": os.environ.get("INPUT_MOD", "") or "1",
                   "charge_current_ma": os.environ.get("INPUT_CHG", "") or "2000",
+                  "keep_display_chg": os.environ.get("INPUT_KDC", "") or "1",
               }
           elif event == "repository_dispatch":
               data = {
@@ -197,6 +205,7 @@ jobs:
                   "battery_capacity_mah": os.environ.get("DISPATCH_CAP", "") or "4000",
                   "radio_module": os.environ.get("DISPATCH_MOD", "") or "1",
                   "charge_current_ma": os.environ.get("DISPATCH_CHG", "") or "2000",
+                  "keep_display_chg": os.environ.get("DISPATCH_KDC", "") or "1",
               }
           else:
               body = os.environ.get("ISSUE_BODY") or ""
@@ -257,6 +266,7 @@ jobs:
           cap = num("battery_capacity_mah", "4000", 500, 30000, as_int=True)
           mod = num("radio_module", "1", 0, 3, as_int=True)
           chg = num("charge_current_ma", "2000", 100, 3000, as_int=True)
+          kdc = num("keep_display_chg", "1", 0, 1, as_int=True)
 
           ROLE_MAP = {
               "companion_radio_ble": "Darktec_companion_radio_ble",
@@ -322,6 +332,7 @@ jobs:
               "battery_capacity_mah": cap,
               "radio_module": mod,
               "charge_current_ma": chg,
+              "keep_display_chg": kdc,
           }
           print(json.dumps(out, ensure_ascii=False, indent=2))
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
@@ -376,6 +387,7 @@ jobs:
           BATTERY_CAPACITY_MAH: ${{ steps.req.outputs.battery_capacity_mah }}
           DARKTEC_RADIO_MODULE: ${{ steps.req.outputs.radio_module }}
           DARKTEC_CHARGE_CURRENT_MA: ${{ steps.req.outputs.charge_current_ma }}
+          DARKTEC_KEEP_DISPLAY_CHG: ${{ steps.req.outputs.keep_display_chg }}
           FIRMWARE_TRACK: ${{ steps.req.outputs.firmware_track }}
         run: |
           chmod +x scripts/build-darktec-ondemand.sh
