@@ -79,7 +79,9 @@ public:
   bool readInaChannel(int ch, float* bus_v, float* ma) {
     if (!_ina_ok || ch < 0 || ch > 2) return false;
     *bus_v = _ina.getBusVoltage((uint8_t)ch);
-    *ma = _ina.getCurrentAmps((uint8_t)ch) * 1000.0f;
+    float acc = 0;
+    for (int i = 0; i < 3; i++) acc += _ina.getCurrentAmps((uint8_t)ch);
+    *ma = acc / 3.0f * 1000.0f;
     return true;
   }
 

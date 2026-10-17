@@ -42,6 +42,10 @@ void DarktecBoard::begin() {
     _ina_ok = _ina.begin(TELEM_INA3221_ADDRESS, &Wire);
     if (_ina_ok) {
       _ina.setShuntResistance(DARKTEC_INA_CHARGE_CH, TELEM_INA3221_SHUNT_VALUE);
+      // spec 0002: аппаратное усреднение — мелкие токи (десятки мА) читаются
+      // стабильнее; полный цикл конверсии при этом ~100 мс, страница датчиков
+      // читает раз в секунду.
+      _ina.setAveragingMode(INA3221_AVG_16_SAMPLES);
     }
 }
 
