@@ -33,6 +33,8 @@ class DarktecDisplay : public DisplayDriver {
   bool statusDotWanted() const;
   void paintStatusDot(bool on);
   void flushFrame();
+  // spec 0002 FR-3: true, когда настройка разрешает экрану гаснуть при зарядке.
+  bool screenSleepAllowed() const;
 
 public:
   DarktecDisplay(RefCountedDigitalPin* peripher_power=NULL)

@@ -102,6 +102,11 @@ bool DarktecBoard::isCharging() {
   return _charging;
 }
 
+bool DarktecBoard::isChargeFull() {
+  pollChargeSense();
+  return g_charge.state == DarktecSocModel::ChargeState::Full;
+}
+
 bool DarktecBoard::isExternalPowered() {
   // Pack charging is INA3221 CH2. USB VBUS is not pack charge, but KEEP_DISPLAY
   // and the stock charging icon also treat a USB cable as external power.

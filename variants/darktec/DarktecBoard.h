@@ -44,6 +44,8 @@ public:
   DarktecBoard() : NRF52Board("Darktec_OTA") {}
   void begin();
   bool isCharging();
+  // spec 0001 FR-34: automat in the Full phase (plug instead of bolt).
+  bool isChargeFull();
   bool isExternalPowered() override;
   bool isLoRaActivity() const {
     return _txing || _rxing
@@ -70,6 +72,15 @@ public:
     }
     raw = raw / BATTERY_SAMPLES;
     return (uint16_t)(adc_mult * raw);
+  }
+
+  // Raw ADC read without side effects (used by the SOC model tick, spec 0001)
+  // and by the INA sensors page (spec 0002).
+  bool readInaChannel(int ch, float* bus_v, float* ma) {
+    if (!_ina_ok || ch < 0 || ch > 2) return false;
+    *bus_v = _ina.getBusVoltage((uint8_t)ch);
+    *ma = _ina.getCurrentAmps((uint8_t)ch) * 1000.0f;
+    return true;
   }
 
   uint16_t getBattMilliVolts() override {

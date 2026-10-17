@@ -2,6 +2,7 @@
 
 #include "DarktecDisplay.h"
 #include "DarktecBoard.h"
+#include "DarktecPrefs.h"
 #include "glcdfont6x8.h"
 
 extern DarktecBoard board;
@@ -48,7 +49,17 @@ void DarktecDisplay::turnOn() {
   display.ssd1306_command(SSD1306_DISPLAYON);
 }
 
+// spec 0002 FR-3: настройка «Screen on chg» — экран при зарядке гаснет
+// только если она в положении Off (screen_sleep_chg = 1).
+bool DarktecDisplay::screenSleepAllowed() const {
+  return DarktecPrefs::get().screen_sleep_chg != 0;
+}
+
 void DarktecDisplay::turnOff() {
+  // spec 0002 FR-3: при зарядке и «Screen on chg: On» гаснуть нельзя.
+  if (board.isCharging() && !screenSleepAllowed()) {
+    return;
+  }
   display.ssd1306_command(SSD1306_DISPLAYOFF);
   if (_isOn) {
     if (_peripher_power) {
@@ -231,7 +242,8 @@ void DarktecDisplay::translateUTF8ToBlocks(char* dest, const char* src, size_t d
 bool DarktecDisplay::isOn() {
   bool on = _isOn;
   bool charging = board.isCharging();
-  if (charging && !_was_charging && !on) {
+  // spec 0002: при «Screen on chg: Off» зарядка экран не будит.
+  if (charging && !_was_charging && !on && !screenSleepAllowed()) {
     turnOn();
     on = true;
   }
