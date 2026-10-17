@@ -65,3 +65,23 @@
 #ifndef BATT_MAX_MILLIVOLTS
 #define BATT_MAX_MILLIVOLTS  BATT_PACK_FULL_MV
 #endif
+
+// ---- Cell capacity and board charge current (spec 0001: FR-1, FR-31) ----
+// Defaults of /darktec.prefs on first boot; afterwards the file is the
+// source of truth (the UI edits it, FR-8..11).
+#ifndef BATTERY_CAPACITY_MAH
+#define BATTERY_CAPACITY_MAH 4000
+#endif
+#if BATTERY_CAPACITY_MAH < 500 || BATTERY_CAPACITY_MAH > 30000
+#error "BATTERY_CAPACITY_MAH must be in 500..30000 mAh (large LTO/LiFePO4 packs)"
+#endif
+
+// Nominal board charge current: TPS54302 + resistor divider (FR-31). The
+// firmware does not control the current; the value feeds the charge automat
+// (C/30 full detection) and future ETA estimates.
+#ifndef DARKTEC_CHARGE_CURRENT_MA
+#define DARKTEC_CHARGE_CURRENT_MA 2000
+#endif
+#if DARKTEC_CHARGE_CURRENT_MA < 100 || DARKTEC_CHARGE_CURRENT_MA > 3000
+#error "DARKTEC_CHARGE_CURRENT_MA must be in 100..3000 mA"
+#endif

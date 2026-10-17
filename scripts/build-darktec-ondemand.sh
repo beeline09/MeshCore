@@ -18,10 +18,14 @@
 #   LORA_CR            5–8 (default 8)
 #   LORA_TX_POWER      dBm (default 22)
 #   ADC_MULTIPLIER     VBAT divider (default 1.750; range 0.5–10)
+#   BATTERY_CAPACITY_MAH  cell capacity mAh → /darktec.prefs default (4000; 500–30000)
+#   DARKTEC_RADIO_MODULE  0 HT-RA62, 1 E22-900M30S, 2 E22P-868M30S, 3 E22-900M33S (default 1)
+#   DARKTEC_CHARGE_CURRENT_MA  board charge current nominal mA (2000; 100–3000)
 #
 # Output:
-#   out/DarktecOff_{role}_{chem}_{cells}s__{name_slug}__{radio_slug}[__adc{n}]__{sha}.{uf2,zip}
-#   adc slug only when ADC_MULTIPLIER != 1.750 (keeps default on-demand names stable)
+#   out/DarktecOff_{role}_{chem}_{cells}s__{name_slug}__{radio_slug}[__adc{n}][__cap{n}][__mod{n}][__chg{n}]__{sha}.{uf2,zip}
+#   slugs only for non-defaults, fixed order adc → cap → mod → chg
+#   (keeps default on-demand names stable; must mirror the site's ondemandBaseName())
 #
 # No DARKTEC_BATT_PROTECT — official variant has no ADC cutoff.
 # Do NOT put battery/LORA/ADC overrides as -U/-D in PLATFORMIO_BUILD_FLAGS.
@@ -62,6 +66,26 @@ if not (0.5 <= v <= 10.0):
 print(f"{v:.3f}")
 ' "${ADC_MULTIPLIER:-1.750}")"
 
+# spec 0001: defaults of /darktec.prefs on first boot (range-checked).
+BATTERY_CAPACITY_MAH="$(python3 -c 'import sys
+v=int(sys.argv[1])
+if not (500 <= v <= 30000):
+    raise SystemExit(f"BATTERY_CAPACITY_MAH out of range [500,30000]: {v}")
+print(v)
+' "${BATTERY_CAPACITY_MAH:-4000}")"
+DARKTEC_RADIO_MODULE="$(python3 -c 'import sys
+v=int(sys.argv[1])
+if not (0 <= v <= 3):
+    raise SystemExit(f"DARKTEC_RADIO_MODULE out of range [0,3]: {v}")
+print(v)
+' "${DARKTEC_RADIO_MODULE:-1}")"
+DARKTEC_CHARGE_CURRENT_MA="$(python3 -c 'import sys
+v=int(sys.argv[1])
+if not (100 <= v <= 3000):
+    raise SystemExit(f"DARKTEC_CHARGE_CURRENT_MA out of range [100,3000]: {v}")
+print(v)
+' "${DARKTEC_CHARGE_CURRENT_MA:-2000}")"
+
 radio_token() {
   printf '%s' "$1" | tr '.' 'p' | tr -cd 'A-Za-z0-9p-'
 }
@@ -74,7 +98,17 @@ if [ "$ADC_MULTIPLIER" != "$DEFAULT_ADC" ]; then
   ADC_SLUG="__adc$(radio_token "$ADC_MULTIPLIER")"
 fi
 
-OUT_BASE="DarktecOff_${DARKTEC_ROLE_SLUG}_${CHEM_SLUG}_${BATTERY_CELLS}s__${NAME_SLUG}__${RADIO_SLUG}${ADC_SLUG}__${COMMIT_HASH}"
+DEFAULT_CAP="4000"
+DEFAULT_MOD="1"
+DEFAULT_CHG="2000"
+CAP_SLUG=""
+if [ "$BATTERY_CAPACITY_MAH" != "$DEFAULT_CAP" ]; then CAP_SLUG="__cap${BATTERY_CAPACITY_MAH}"; fi
+MOD_SLUG=""
+if [ "$DARKTEC_RADIO_MODULE" != "$DEFAULT_MOD" ]; then MOD_SLUG="__mod${DARKTEC_RADIO_MODULE}"; fi
+CHG_SLUG=""
+if [ "$DARKTEC_CHARGE_CURRENT_MA" != "$DEFAULT_CHG" ]; then CHG_SLUG="__chg${DARKTEC_CHARGE_CURRENT_MA}"; fi
+
+OUT_BASE="DarktecOff_${DARKTEC_ROLE_SLUG}_${CHEM_SLUG}_${BATTERY_CELLS}s__${NAME_SLUG}__${RADIO_SLUG}${ADC_SLUG}${CAP_SLUG}${MOD_SLUG}${CHG_SLUG}__${COMMIT_HASH}"
 
 rm -rf out
 mkdir -p out
@@ -94,14 +128,14 @@ mkdir -p "$(dirname "$DEFS_H")"
 python3 - "$DEFS_H" "${FIRMWARE_VERSION_STRING}" "${ADVERT_NAME:-}" \
   "${BATTERY_CHEMISTRY}" "${BATTERY_CELLS}" \
   "${RADIO_CUSTOM}" "${LORA_FREQ}" "${LORA_BW}" "${LORA_SF}" "${LORA_CR}" "${LORA_TX_POWER}" \
-  "${ADC_MULTIPLIER}" <<'PY'
+  "${ADC_MULTIPLIER}" "${BATTERY_CAPACITY_MAH}" "${DARKTEC_RADIO_MODULE}" "${DARKTEC_CHARGE_CURRENT_MA}" <<'PY'
 import sys
 (
     path, ver, advert,
     chem, cells,
     radio_custom, freq, bw, sf, cr, tx,
-    adc,
-) = sys.argv[1:13]
+    adc, cap, module, charge,
+) = sys.argv[1:16]
 
 def c_str(s: str) -> str:
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ").replace("\r", "")[:31] + '"'
@@ -119,6 +153,14 @@ lines = [
     "/* VBAT divider. Default 1.750 (100k/100k, calibrated). */",
     "#undef ADC_MULTIPLIER",
     f"#define ADC_MULTIPLIER  {adc}f",
+    "",
+    "/* spec 0001: defaults of /darktec.prefs on first boot. */",
+    "#undef BATTERY_CAPACITY_MAH",
+    f"#define BATTERY_CAPACITY_MAH  {cap}",
+    "#undef DARKTEC_RADIO_MODULE",
+    f"#define DARKTEC_RADIO_MODULE  {module}",
+    "#undef DARKTEC_CHARGE_CURRENT_MA",
+    f"#define DARKTEC_CHARGE_CURRENT_MA  {charge}",
     "",
     "#undef FIRMWARE_VERSION",
     f"#define FIRMWARE_VERSION {c_str(ver)}",
@@ -156,6 +198,7 @@ echo "=== On-demand official build ${OUT_BASE} ==="
 echo "env=${DARKTEC_PIO_ENV} chem=${BATTERY_CHEMISTRY} cells=${BATTERY_CELLS} name=${ADVERT_NAME:-<default>}"
 echo "radio freq=${LORA_FREQ} bw=${LORA_BW} sf=${LORA_SF} cr=${LORA_CR} tx=${LORA_TX_POWER} custom=${RADIO_CUSTOM}"
 echo "adc_multiplier=${ADC_MULTIPLIER} custom=${ADC_CUSTOM}"
+echo "darktec.prefs defaults: capacity=${BATTERY_CAPACITY_MAH} mAh module=${DARKTEC_RADIO_MODULE} charge=${DARKTEC_CHARGE_CURRENT_MA} mA"
 echo "PLATFORMIO_BUILD_FLAGS=${PLATFORMIO_BUILD_FLAGS}"
 cat "$DEFS_H"
 

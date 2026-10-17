@@ -21,12 +21,9 @@
 #ifndef DARKTEC_INA_CHARGE_CH
 #define DARKTEC_INA_CHARGE_CH 1
 #endif
-#ifndef DARKTEC_CHARGE_ON_MA
-#define DARKTEC_CHARGE_ON_MA  120.0f
-#endif
-#ifndef DARKTEC_CHARGE_OFF_MA
-#define DARKTEC_CHARGE_OFF_MA 100.0f
-#endif
+// Plain charge-current hysteresis is replaced by the DarktecSocModel charge
+// automat (spec 0001 FR-34): TPS54302 has no charge termination, so "full"
+// is detected by the firmware, not by the hardware.
 
 class DarktecBoard : public NRF52BoardDCDC {
 protected:
@@ -63,7 +60,8 @@ public:
 
   #define BATTERY_SAMPLES 8
 
-  uint16_t getBattMilliVolts() override {
+  // Raw ADC read without side effects (used by the SOC model tick, spec 0001).
+  uint16_t readBattMvRaw() {
     analogReadResolution(12);
 
     uint32_t raw = 0;
@@ -72,6 +70,10 @@ public:
     }
     raw = raw / BATTERY_SAMPLES;
     return (uint16_t)(adc_mult * raw);
+  }
+
+  uint16_t getBattMilliVolts() override {
+    return readBattMvRaw();
   }
 
   bool setAdcMultiplier(float multiplier) override {

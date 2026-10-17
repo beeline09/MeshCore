@@ -99,3 +99,36 @@
 - Экран настроек хуком (этап 4) — если хук не выходит, эскалация.
 - R_cell 60/40/30 мОм — approximation; после этапа 7 замер sag на плате
   уточнит (обновление констант — отдельный микрокоммит).
+
+## Фаза 1b. Официальная прошивка (FR-28/29)
+
+Реализация — целиком оверлеем варианта, **правок ядра — ноль**:
+
+1. Вариант: DarktecSocTables.h, DarktecSoc.h, DarktecSocModel.h,
+   DarktecPrefsFormat.h/.cpp, DarktecPrefs.h, DarktecPowerState.h — копии
+   из южной ветки (формат файла тот же, FR-16). BatteryPack-оверлей не
+   нужен: в ядре официалки helpers/BatteryPack нет, SOC-процент идёт
+   прямо из DarktecPowerState в оверлейный UI.
+2. battery_chemistry.h — добавлены флаги BATTERY_CAPACITY_MAH /
+   DARKTEC_CHARGE_CURRENT_MA с #error-валидацией (защита DARKTEC_BATT_PROTECT
+   в официалку сознательно не переносится — вне скоупа фазы).
+3. variant.h — DARKTEC_RADIO_MODULE (0..3) с валидацией; для E22P (2)
+   SX126X_RXEN снимается #undef и пин P0.17 держится высоким из
+   DarktecBoard::begin() (EN-логика MacMillan25).
+4. DarktecBoard.h/.cpp — readBattMvRaw, ленивый DarktecPrefs::begin(),
+   тик SOC-модели и автомата заряда из pollChargeSense (старые пороги
+   120/100 мА удалены), фасад DarktecPowerState.
+5. Экран настроек (FR-29): страница DARKTEC_PAGE в оверлее
+   variants/darktec/companion_ui/UITask.cpp (этот оверлей уже существовал
+   для юг-независимых правок UI и подменяет ui-new/UITask.cpp фильтром
+   в env'ах companion). Та же страница, что на юге: Capacity/Batt type/
+   Cells/Radio mod/Charge, строки английские; SOC-процент индикатора —
+   из модели. Оверлей невозможен только там, где его не было и в фазе 1
+   на юге: сам факт новой страницы требует файл-подмены — он уже
+   вариантный, новых мест правки ядра не появилось.
+6. Скрипт scripts/build-darktec-ondemand.sh — токены __cap/__mod/__chg
+   (только не-дефолты, порядок как на сайте), DarktecOff_-нейминг,
+   ADC/CAP/MOD/CHG в DEFS_H. Workflow main уже шлёт эти параметры.
+
+Проверки: Darktec_companion_radio_ble/usb SUCCESS; прошивка официалки
+на устройство; имена сайт↔скрипт сверены байт в байт.

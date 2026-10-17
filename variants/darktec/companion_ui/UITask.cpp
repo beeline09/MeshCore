@@ -6,6 +6,16 @@
 #include "target.h"
 #include <string.h>
 #include <time.h>
+// Darktec settings page (spec 0001, FR-8..11/FR-28): values live in
+// /darktec.prefs from the variant, so the page is compiled only where the
+// variant headers are on the include path (Darktec envs).
+#if defined(DARKTEC) && defined(__has_include)
+  #if __has_include("DarktecPrefs.h")
+    #include "DarktecPrefs.h"
+    #include "DarktecPowerState.h"
+    #define UI_DARKTEC_SETTINGS 1
+  #endif
+#endif
 #ifdef ENABLE_WIFI_INTERFACE
   #include <WiFi.h>
 #endif
@@ -105,6 +115,9 @@ class HomeScreen : public UIScreen {
 #if UI_DISCOVER_SCREEN
     DISCOVERY,
 #endif
+#if UI_DARKTEC_SETTINGS
+    DARKTEC_PAGE,
+#endif
 #ifndef UI_NO_HIBERNATE
     SHUTDOWN,
 #endif
@@ -127,7 +140,12 @@ class HomeScreen : public UIScreen {
 #endif
 
   void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) {
-    // Convert millivolts to percentage
+    // Percentage: SOC model from the variant (spec 0001) — coulomb counter
+    // with per-chemistry tables; falls back to voltage lookup before the
+    // model starts.
+#if UI_DARKTEC_SETTINGS
+    int batteryPercentage = (int)DarktecPowerState::socPercent(batteryMilliVolts);
+#else
 #ifndef BATT_MIN_MILLIVOLTS
   #define BATT_MIN_MILLIVOLTS 3000
 #endif
@@ -139,6 +157,7 @@ class HomeScreen : public UIScreen {
     int batteryPercentage = ((batteryMilliVolts - minMilliVolts) * 100) / (maxMilliVolts - minMilliVolts);
     if (batteryPercentage < 0) batteryPercentage = 0; // Clamp to 0%
     if (batteryPercentage > 100) batteryPercentage = 100; // Clamp to 100%
+#endif
 
     // battery icon
     int iconWidth = 24;
@@ -184,6 +203,124 @@ class HomeScreen : public UIScreen {
   bool sensors_scroll = false;
   int sensors_scroll_offset = 0;
   int next_sensors_refresh = 0;
+
+#if UI_DARKTEC_SETTINGS
+  // Darktec settings (spec 0001, FR-8..11): south-style two levels.
+  // ROOT — a normal carousel page showing the single "[ Darktec ]" folder;
+  // click/double still page through the carousel, long press opens the
+  // folder. The folder holds our items with "< Back" as the LAST row
+  // (bottom), returning to ROOT. The board has a single button (click =
+  // NEXT, double = PREV, long = ENTER, triple = SELECT; KEY_LEFT never
+  // occurs), so exits live in on-screen rows.
+  bool          _darktec_in_folder = false;  // false = ROOT page, true = folder
+  bool          _darktec_editing = false;    // item value being edited (brackets)
+  int           _darktec_sel = 0;
+  unsigned long _darktec_note_until = 0;
+  int           _darktec_note_item = 0;
+  char          _darktec_note[24] = "";
+
+  static constexpr int DARKTEC_ROWS = 6;  // 5 settings + < Back (bottom)
+
+  void darktecNote(int item, const char* text) {
+    _darktec_note_item = item;
+    snprintf(_darktec_note, sizeof(_darktec_note), "%s", text ? text : "");
+    _darktec_note_until = millis() + 4000;
+  }
+
+  void darktecChangeValue(int i, bool fwd) {
+    DarktecPrefs::Settings s = DarktecPrefs::get();
+    if (i == 0) {
+      int cap = (int)s.capacity_mah + (fwd ? 100 : -100);
+      if (cap > (int)DarktecPrefsFormat::kCapacityMax) cap = (int)DarktecPrefsFormat::kCapacityMin;
+      if (cap < (int)DarktecPrefsFormat::kCapacityMin) cap = (int)DarktecPrefsFormat::kCapacityMax;
+      s.capacity_mah = (uint16_t)cap;
+    } else if (i == 1) {
+      s.chem = (s.chem + (fwd ? 1 : 2)) % 3;
+      if (s.chem != DarktecPrefsFormat::CHEM_LTO && s.cells > 1) {
+        s.cells = 1;   // 2S is LTO-only — reset with a warning (FR-10)
+        darktecNote(2, "cells: 1 (2S=LTO)");
+      } else {
+        darktecNote(1, "after reboot");
+      }
+    } else if (i == 2) {
+      if (s.cells == 2) {
+        s.cells = 1;
+        darktecNote(2, "after reboot");
+      } else if (s.chem == DarktecPrefsFormat::CHEM_LTO) {
+        s.cells = 2;
+        darktecNote(2, "after reboot");
+      } else {
+        darktecNote(2, "2S: LTO only");
+        return;
+      }
+    } else if (i == 3) {
+      s.module = (s.module + (fwd ? 1 : 3)) % 4;
+      darktecNote(3, "after reboot");
+    } else if (i == 4) {
+      int ma = (int)s.charge_ma + (fwd ? 100 : -100);
+      if (ma > (int)DarktecPrefsFormat::kChargeMax) ma = (int)DarktecPrefsFormat::kChargeMin;
+      if (ma < (int)DarktecPrefsFormat::kChargeMin) ma = (int)DarktecPrefsFormat::kChargeMax;
+      s.charge_ma = (uint16_t)ma;
+    } else {
+      return;
+    }
+    DarktecPrefs::save(s);
+  }
+
+  void renderDarktecSettings(DisplayDriver& display) {
+    display.setTextSize(1);
+    if (!_darktec_in_folder) {
+      // ROOT: a regular carousel page with the single folder row; the page
+      // dots above stay visible — click/double still page the carousel.
+      display.setColor(UIColor::primary_txt);
+      display.setCursor(6, 22);
+      display.print("[ Darktec ]");
+      display.setColor(UIColor::secondary_txt);
+      display.drawTextCentered(display.width() / 2, 64 - 11, "open: " PRESS_LABEL);
+      return;
+    }
+
+    // Folder: our settings, "< Back" as the last (bottom) row.
+    const DarktecPrefs::Settings& s = DarktecPrefs::get();
+    static const char* chem_names[3] = { "Li-ion", "LiFePO4", "LTO" };
+    static const char* mod_names[4] = { "HT-RA62", "E22-30S", "E22P-868", "E22-33S" };
+    static const char* labels[DARKTEC_ROWS] = { "Capacity, mAh", "Batt type", "Cells", "Radio mod", "Charge, mA", "Back" };
+    int y = 16;
+    for (int i = 0; i < DARKTEC_ROWS; i++, y += 8) {
+      const char* label = labels[i];
+      if (i < DARKTEC_ROWS - 1 && i == _darktec_note_item && _darktec_note[0] && millis() < _darktec_note_until) {
+        label = _darktec_note;   // transient note replaces the row label
+      }
+      display.setColor(UIColor::primary_txt);
+      display.setCursor(0, y);
+      display.print(_darktec_sel == i ? ">" : " ");
+      display.setCursor(6, y);
+      display.print(label);
+      char val[12] = "";
+      if (i == 0) {
+        snprintf(val, sizeof(val), "%u", (unsigned)s.capacity_mah);
+      } else if (i == 1) {
+        snprintf(val, sizeof(val), "%s", chem_names[s.chem < 3 ? s.chem : 0]);
+      } else if (i == 2) {
+        snprintf(val, sizeof(val), "%uS", (unsigned)s.cells);
+      } else if (i == 3) {
+        snprintf(val, sizeof(val), "%s", mod_names[s.module < 4 ? s.module : 1]);
+      } else if (i == 4) {
+        snprintf(val, sizeof(val), "%u", (unsigned)s.charge_ma);
+      }
+      if (val[0]) {
+        char shown[16];
+        if (_darktec_editing && _darktec_sel == i) {
+          snprintf(shown, sizeof(shown), "[%s]", val);   // edit mode marker
+          display.drawTextRightAlign(display.width() - 2, y, shown);
+        } else {
+          display.drawTextRightAlign(display.width() - 2, y, val);
+        }
+      }
+    }
+  }
+#endif
+
 
   void refresh_sensors() {
     if (millis() > next_sensors_refresh) {
@@ -266,19 +403,26 @@ public:
     // battery voltage
     renderBatteryIndicator(display, _task->getBattMilliVolts());
 
-    // curr page indicator
-    if (UIColor::title_bkg == UIColor::window_bkg) {
-      display.setColor(UIColor::title_txt);
-    } else {
-      display.setColor(UIColor::title_bkg);
-    }
-    int y = 14;
-    int x = display.width() / 2 - 5 * (HomePage::Count-1);
-    for (uint8_t i = 0; i < HomePage::Count; i++, x += 10) {
-      if (i == _page) {
-        display.fillRect(x-1, y-1, 4, 4);
+    // curr page indicator (hidden only inside the Darktec folder: its 6
+    // menu rows start right under the title bar)
+    bool darktec_dots_hidden = false;
+#if UI_DARKTEC_SETTINGS
+    darktec_dots_hidden = (_page == HomePage::DARKTEC_PAGE && _darktec_in_folder);
+#endif
+    if (!darktec_dots_hidden) {
+      if (UIColor::title_bkg == UIColor::window_bkg) {
+        display.setColor(UIColor::title_txt);
       } else {
-        display.fillRect(x, y, 2, 2);
+        display.setColor(UIColor::title_bkg);
+      }
+      int y = 14;
+      int x = display.width() / 2 - 5 * (HomePage::Count-1);
+      for (uint8_t i = 0; i < HomePage::Count; i++, x += 10) {
+        if (i == _page) {
+          display.fillRect(x-1, y-1, 4, 4);
+        } else {
+          display.fillRect(x, y, 2, 2);
+        }
       }
     }
 
@@ -537,6 +681,14 @@ public:
         display.drawTextCentered(display.width() / 2, y, "discover: " PRESS_LABEL);
       }
 #endif
+#if UI_DARKTEC_SETTINGS
+    } else if (_page == HomePage::DARKTEC_PAGE) {
+      renderDarktecSettings(display);
+      // redraw shortly after a transient note expires (label snaps back)
+      if (_darktec_note_until && millis() < _darktec_note_until) {
+        return 1000;
+      }
+#endif
 #ifndef UI_NO_HIBERNATE
     } else if (_page == HomePage::SHUTDOWN) {
       display.setColor(UIColor::corp_blue);
@@ -555,6 +707,59 @@ public:
   }
 
   bool handleInput(char c) override {
+#if UI_DARKTEC_SETTINGS
+    // Darktec settings, two levels. ROOT is a regular carousel page: the
+    // generic page-switching below handles click/double — only long press
+    // is intercepted here to open the folder. Inside the folder the keys
+    // drive the menu; "< Back" (the bottom row) returns to ROOT.
+    // NOTE: handleInput is one function — "not handled" must fall through
+    // to the code below, a `return false` here would skip the paging.
+    if (_page == HomePage::DARKTEC_PAGE && _darktec_in_folder) {
+      // Editing an item: brackets mark it; click increases, double decreases,
+      // long press leaves the edit. Nothing else responds while editing.
+      if (_darktec_editing) {
+        if (c == KEY_NEXT) {
+          darktecChangeValue(_darktec_sel, true);
+          return true;
+        }
+        if (c == KEY_PREV) {
+          darktecChangeValue(_darktec_sel, false);
+          return true;
+        }
+        if (c == KEY_ENTER) {
+          _darktec_editing = false;   // done with this item
+          return true;
+        }
+        return true;  // absorb the rest while editing
+      }
+      // Navigating the folder: click/double move the cursor, long press on a
+      // setting enters its edit mode, long press on "< Back" returns to ROOT.
+      if (c == KEY_NEXT) {
+        _darktec_sel = (_darktec_sel + 1) % DARKTEC_ROWS;
+        return true;
+      }
+      if (c == KEY_PREV) {
+        _darktec_sel = (_darktec_sel + DARKTEC_ROWS - 1) % DARKTEC_ROWS;
+        return true;
+      }
+      if (c == KEY_ENTER) {
+        if (_darktec_sel == DARKTEC_ROWS - 1) {
+          _darktec_in_folder = false;  // < Back — return to the settings page
+        } else {
+          _darktec_editing = true;     // long press on a setting — edit it
+        }
+        return true;
+      }
+      return true;  // absorb everything else inside the folder
+    }
+    if (_page == HomePage::DARKTEC_PAGE && c == KEY_ENTER) {
+      _darktec_in_folder = true;     // long press on [ Darktec ]
+      _darktec_sel = 0;
+      _darktec_editing = false;
+      return true;
+    }
+    // ROOT + any other key: fall through — the carousel paging below applies.
+#endif
     if (c == KEY_LEFT || c == KEY_PREV) {
       _page = (_page + HomePage::Count - 1) % HomePage::Count;
       return true;

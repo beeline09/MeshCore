@@ -102,3 +102,21 @@
 #define SX126X_TXEN               (-1)
 #define SX126X_DIO2_AS_RF_SWITCH  true
 #define SX126X_DIO3_TCXO_VOLTAGE  (1.8f)
+
+// Radio module type (spec 0001 FR-2, D-6): 0 HT-RA62, 1 E22-900M30S (default),
+// 2 E22P-868M30S, 3 E22-900M33S. On the E22P the module pin 6 is a global
+// RF-path EN (active high): RadioLib would drive it as RXEN and drop it
+// during TX, killing the whole path. For module 2 the pin is taken out of
+// the library (SX126X_RXEN undefined) and held high by DarktecBoard::begin().
+// All other modules keep the stock wiring above.
+#ifndef DARKTEC_RADIO_MODULE
+#define DARKTEC_RADIO_MODULE 1
+#endif
+#if DARKTEC_RADIO_MODULE < 0 || DARKTEC_RADIO_MODULE > 3
+#error "DARKTEC_RADIO_MODULE must be 0 (HT-RA62), 1 (E22-900M30S), 2 (E22P-868M30S) or 3 (E22-900M33S)"
+#endif
+#if DARKTEC_RADIO_MODULE == 2
+#undef SX126X_RXEN
+// E22P EN: P0.17 (Arduino 2), driven manually from DarktecBoard::begin().
+#define DARKTEC_RADIO_EN_PIN 2
+#endif
