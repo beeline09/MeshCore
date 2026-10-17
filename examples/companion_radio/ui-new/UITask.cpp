@@ -1237,12 +1237,14 @@ public:
       // Полная лестница времени (spec 0002, замечание владельца): минуты →
       // часы (до 10 ч с минутами) → часы → сутки → месяцы → годы. При
       // слабом токе разряда оценка честно уходит в дни и месяцы.
+      // < 10 ч — с минутами; 10–24 ч — часы; 1–30 дн — дни; 1–12 мес —
+      // месяцы; больше года — годы.
       const long h = mins / 60;
-      if (mins < 600)                 snprintf(ebuf, sizeof(ebuf), "E %ldh%02ldm", h, (long)(mins % 60));
-      else if (h < 48)                snprintf(ebuf, sizeof(ebuf), "E %ldh", h);
-      else if (h < 24L * 100)         snprintf(ebuf, sizeof(ebuf), "E %ldd", h / 24);
-      else if (h < 24L * 365 * 2)     snprintf(ebuf, sizeof(ebuf), "E %ldmo", h / (24L * 30));
-      else                            snprintf(ebuf, sizeof(ebuf), "E %ldy", h / (24L * 365));
+      if (mins < 600)            snprintf(ebuf, sizeof(ebuf), "E %ldh%02ldm", h, (long)(mins % 60));
+      else if (h < 24)           snprintf(ebuf, sizeof(ebuf), "E %ldh", h);
+      else if (h < 24L * 30)     snprintf(ebuf, sizeof(ebuf), "E %ldd", h / 24);
+      else if (h < 24L * 365)    snprintf(ebuf, sizeof(ebuf), "E %ldmo", h / 30);
+      else                       snprintf(ebuf, sizeof(ebuf), "E %ldy", h / 365);
     }
     display.setCursor(tx0 + 9, ey);
     display.print(ebuf);
