@@ -19,13 +19,21 @@ PATHS=(
   .github/workflows/build-darktec-official-firmwares.yml
 )
 
-{
-  git log --no-merges --pretty=format:'%s' -- "${PATHS[@]}" -40 2>/dev/null || true
-  echo
-  git log --no-merges --pretty=format:'%s' \
-    --grep='[Dd]arktec|[Oo]n-?demand|DARKTEC_|beeline09' -i -E -30 \
-    2>/dev/null || true
-} > /tmp/darktec-official-commits.txt
+# Диапазон от предыдущего официального тега (если есть и резолвится);
+# иначе — фолбэк на последние 40 darktec-коммитов.
+PREV_TAG="${PREV_TAG:-}"
+if [ -n "$PREV_TAG" ] && ! git rev-parse "$PREV_TAG" >/dev/null 2>&1; then
+  git fetch --tags --depth=80 origin "refs/tags/${PREV_TAG}:refs/tags/${PREV_TAG}" 2>/dev/null || true
+fi
+if [ -n "$PREV_TAG" ] && git rev-parse "$PREV_TAG" >/dev/null 2>&1; then
+  {
+    git log --no-merges --pretty=format:'%s' "${PREV_TAG}..HEAD" -- "${PATHS[@]}" 2>/dev/null || true
+  } > /tmp/darktec-official-commits.txt
+else
+  {
+    git log --no-merges --pretty=format:'%s' -- "${PATHS[@]}" -40 2>/dev/null || true
+  } > /tmp/darktec-official-commits.txt
+fi
 
 cat /tmp/darktec-official-commits.txt | \
   VERSION="$VERSION" OUT="$OUT" UPSTREAM_BRANCH_URL="$UPSTREAM_BRANCH_URL" \
@@ -59,7 +67,7 @@ def classify(msg: str):
         return "Прочее", msg
     kind, rest = m.group(1).lower(), m.group(3)
     mapping = {
-        "feat": "Новое",
+        "darktec": "Новое",
         "feature": "Новое",
         "fix": "Исправления",
         "bugfix": "Исправления",
@@ -74,6 +82,11 @@ def classify(msg: str):
         "test": "Тесты",
     }
     text = rest[:1].upper() + rest[1:] if rest else msg
+    # Никаких следов ИИ-агента в changelog: срезаем «(spec NNNN…)» и подобное.
+    text = re.sub(r"\s*\((?:spec|SDD|спека?)\s[^)]*\)", "", text, flags=re.I)
+    text = re.sub(r"\s*\((?:spec|SDD|спека?)\d+[^)]*\)", "", text, flags=re.I)
+    text = re.sub(r"\s+\(\d{4}-\d{2}-\d{2}\)$", "", text)
+    text = text.strip()
     return mapping.get(kind, "Прочее"), text
 
 seen = set()
