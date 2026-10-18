@@ -22,12 +22,19 @@ PATHS=(
 # Диапазон от предыдущего официального тега (если есть и резолвится);
 # иначе — фолбэк на последние 40 darktec-коммитов.
 PREV_TAG="${PREV_TAG:-}"
+TAG_END="${TAG_END:-HEAD}"   # конец диапазона; для исторической регенерации — сам тег
 if [ -n "$PREV_TAG" ] && ! git rev-parse "$PREV_TAG" >/dev/null 2>&1; then
   git fetch --tags --depth=80 origin "refs/tags/${PREV_TAG}:refs/tags/${PREV_TAG}" 2>/dev/null || true
 fi
+RANGE=""
 if [ -n "$PREV_TAG" ] && git rev-parse "$PREV_TAG" >/dev/null 2>&1; then
+  RANGE="${PREV_TAG}..${TAG_END}"
+elif [ -n "${TAG_END:-}" ] && git rev-parse "$TAG_END" >/dev/null 2>&1; then
+  RANGE="${TAG_END}"   # первый релиз: вся история до тега
+fi
+if [ -n "$RANGE" ]; then
   {
-    git log --no-merges --pretty=format:'%s' "${PREV_TAG}..HEAD" -- "${PATHS[@]}" 2>/dev/null || true
+    git log --no-merges --pretty=format:'%s' "$RANGE" -- "${PATHS[@]}" 2>/dev/null || true
   } > /tmp/darktec-official-commits.txt
 else
   {
