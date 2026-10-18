@@ -54,6 +54,7 @@ static const uint8_t meshcore_logo [] PROGMEM = {
 
 #ifdef DARKTEC
 #include "DarktecPrefs.h"
+#include "DarktecPrefsUI.h"   // общая механика правки: черновик/флеш/значения
 #include "DarktecPowerState.h"
 
 extern MyMesh the_mesh;
@@ -356,48 +357,8 @@ static void drawEtaLine(DisplayDriver& display, int ey) {
   display.drawTextRightAlign(display.width() - 2, ey, ebuf);
 }
 
-// Редактор Darktec (те же 7 строк, что у клиента): смена значения i, fwd.
-static void darktecChangeValue(int i, bool fwd) {
-  DarktecPrefs::Settings s = DarktecPrefs::get();
-  if (i == 0) {
-    int cap = (int)s.capacity_mah + (fwd ? 100 : -100);
-    if (cap > (int)DarktecPrefsFormat::kCapacityMax) cap = (int)DarktecPrefsFormat::kCapacityMin;
-    if (cap < (int)DarktecPrefsFormat::kCapacityMin) cap = (int)DarktecPrefsFormat::kCapacityMax;
-    s.capacity_mah = (uint16_t)cap;
-  } else if (i == 1) {
-    s.chem = (s.chem + (fwd ? 1 : 2)) % 3;
-    if (s.chem != DarktecPrefsFormat::CHEM_LTO && s.cells > 1) {
-      s.cells = 1;
-      darktecNote(2, "cells: 1 (2S=LTO)");
-    } else {
-      darktecNote(1, "after reboot");
-    }
-  } else if (i == 2) {
-    if (s.cells == 2) {
-      s.cells = 1;
-      darktecNote(2, "after reboot");
-    } else if (s.chem == DarktecPrefsFormat::CHEM_LTO) {
-      s.cells = 2;
-      darktecNote(2, "after reboot");
-    } else {
-      darktecNote(2, "2S: LTO only");
-      return;
-    }
-  } else if (i == 3) {
-    s.module = (s.module + (fwd ? 1 : 3)) % 4;
-    darktecNote(3, "after reboot");
-  } else if (i == 4) {
-    int ma = (int)s.charge_ma + (fwd ? 100 : -100);
-    if (ma > (int)DarktecPrefsFormat::kChargeMax) ma = (int)DarktecPrefsFormat::kChargeMin;
-    if (ma < (int)DarktecPrefsFormat::kChargeMin) ma = (int)DarktecPrefsFormat::kChargeMax;
-    s.charge_ma = (uint16_t)ma;
-  } else if (i == 5) {
-    s.screen_sleep_chg = s.screen_sleep_chg ? 0 : 1;
-  } else {
-    return;
-  }
-  DarktecPrefs::save(s);
-}
+// Редактор Darktec — общая механика правки значений в DarktecPrefsUI
+// (клиентская схема: клик = +, двойной = −, долгое = выход из правки).
 
 static constexpr int D_ROWS = 7;  // 6 параметров + Back
 static constexpr int F_ROWS = 3;  // [ Advert ] / [ Darktec ] / [ Back ]
@@ -430,10 +391,8 @@ static int renderSettingsPage(DisplayDriver& display) {
     return 1000;
   }
 
-  // set_state == 2: редактор Darktec (как у клиента).
-  const DarktecPrefs::Settings& prefs = DarktecPrefs::get();
-  static const char* chem_names[3] = { "Li-ion", "LiFePO4", "LTO" };
-  static const char* mod_names[4] = { "HT-RA62", "E22-30S", "E22P-868", "E22-33S" };
+  // set_state == 2: редактор Darktec (как у клиента). Значения — из
+  // черновика, пока есть несохранённые правки (DarktecPrefsUI::shown).
   static const char* labels[D_ROWS] = { "Capacity, mAh", "Batt type", "Cells", "Radio mod",
                                         "Charge, mA", "Screen on chg", "Back" };
   y = 16;
@@ -448,19 +407,7 @@ static int renderSettingsPage(DisplayDriver& display) {
     display.setCursor(6, y);
     display.print(label);
     char raw[12] = "";
-    if (i == 0) {
-      snprintf(raw, sizeof(raw), "%u", (unsigned)prefs.capacity_mah);
-    } else if (i == 1) {
-      snprintf(raw, sizeof(raw), "%s", chem_names[prefs.chem < 3 ? prefs.chem : 0]);
-    } else if (i == 2) {
-      snprintf(raw, sizeof(raw), "%uS", (unsigned)prefs.cells);
-    } else if (i == 3) {
-      snprintf(raw, sizeof(raw), "%s", mod_names[prefs.module < 4 ? prefs.module : 1]);
-    } else if (i == 4) {
-      snprintf(raw, sizeof(raw), "%u", (unsigned)prefs.charge_ma);
-    } else if (i == 5) {
-      snprintf(raw, sizeof(raw), "%s", prefs.screen_sleep_chg ? "Off" : "On");
-    }
+    DarktecPrefsUI::formatRow(i, raw, sizeof(raw));
     if (raw[0]) {
       char shown[16];
       if (d_editing && d_sel == i) {
@@ -626,12 +573,14 @@ void UITask::renderCurrScreen() {
 static bool repHandleKey(UITask* task, char c, DisplayDriver* display) {
   if (c == KEY_ENTER) {
     if (set_state == 2) {
-      if (d_sel == 6) {
+      if (d_sel == DarktecPrefsUI::kRowBack) {
         set_state = 1;  // Back — из редактора Darktec в папку настроек
         d_sel = 1;
         d_editing = false;
+        DarktecPrefsUI::flush();   // сохранить черновик перед выходом
       } else {
         d_editing = !d_editing;  // правка значения ([скобки])
+        if (!d_editing) DarktecPrefsUI::flush();   // выход из правки — фиксируем
       }
       return true;
     }
@@ -669,10 +618,7 @@ static bool repHandleKey(UITask* task, char c, DisplayDriver* display) {
     return true;
   }
   if (c == KEY_SELECT) {
-    if (set_state == 2 && d_editing) {
-      darktecChangeValue(d_sel, false);
-      return true;
-    }
+    // В правке значения тройное глотается (схема клиента: клик +, двойной −).
     if (rep_page == P_NOISE) {
       DarktecPrefs::Settings s = DarktecPrefs::get();
       s.noise_speed = (s.noise_speed + 1) % (DarktecPrefsFormat::kNoiseSpeedMax + 1);
@@ -693,11 +639,22 @@ static bool repHandleKey(UITask* task, char c, DisplayDriver* display) {
     }
     return true;
   }
-  // NEXT/PREV: внутри меню — курсор; снаружи — листание карусели.
+  // NEXT/PREV: в правке значения — ±значение (схема клиента); в меню —
+  // курсор; снаружи — листание карусели.
   int rows = 0;
   if (set_state == 2) rows = D_ROWS;
   else if (set_state == 1) rows = F_ROWS;
   if (rows > 0) {
+    if (set_state == 2 && d_editing) {
+      // Правка значения: клик = +, двойной = −; долгое (выход) обработано
+      // выше, остальное глотаем — как у клиента.
+      if (c == KEY_NEXT || c == KEY_PREV) {
+        const DarktecPrefsUI::EditResult r =
+            DarktecPrefsUI::changeValue(d_sel, c == KEY_NEXT);
+        if (r.note) darktecNote(r.note_item, r.note);
+      }
+      return true;
+    }
     if (c == KEY_NEXT) {
       if (set_state == 2) d_sel = (d_sel + 1) % rows;
       else set_sel = (set_sel + 1) % rows;
@@ -724,6 +681,17 @@ static bool repHandleKey(UITask* task, char c, DisplayDriver* display) {
 
 void UITask::loop() {
 #if defined(PIN_USER_BTN) && defined(DISPLAY_CLASS)
+#ifdef DARKTEC
+  // spec 0002: фронт зарядки будит экран и сбрасывает таймер авто-оффа
+  // (DarktecPrefsUI::chargeFront). Держится ли экран дальше во время
+  // зарядки — решает «Screen on chg» (гейт turnOff в DarktecDisplay).
+  static bool prev_charging = false;
+  if (DarktecPrefsUI::chargeFront(prev_charging, board.isCharging()) && _display != NULL) {
+    _display->turnOn();
+    _auto_off = millis() + AUTO_OFF_MILLIS;
+    _next_refresh = 0;   // перерисовать сразу
+  }
+#endif
   int ev = user_btn.check();
   char key = 0;
   if (ev == BUTTON_EVENT_CLICK) {
@@ -771,6 +739,11 @@ void UITask::loop() {
     }
 #endif
   }
+#endif
+
+#ifdef DARKTEC
+  // spec 0002: отложенная запись правок Darktec-настроек (1.2 с тишины).
+  DarktecPrefsUI::loopTick();
 #endif
 
   if (_display->isOn()) {

@@ -53,11 +53,8 @@ bool DarktecDisplay::isOn() {
   bool on = SSD1306Display::isOn();
   bool charging = board.isCharging();
   // KEEP_DISPLAY_ON_USB не будит погашенный OLED — только не даёт ему заснуть.
-  // spec 0002: при «Screen on chg: Off» зарядка экран не будит.
-  if (charging && !_was_charging && !on && !screenSleepAllowed()) {
-    turnOn();
-    on = true;
-  }
+  // spec 0002: пробуждение при фронте зарядки — в UITask::loop (там таймер
+  // авто-оффа). Здесь только честный отчёт о состоянии.
   _was_charging = charging;
 
   // Между кадрами UI (home ~5 с) доталкиваем только 3×3, буфер Adafruit живой.

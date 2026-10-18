@@ -14,6 +14,7 @@
 #if defined(DARKTEC) && defined(__has_include)
   #if __has_include("DarktecPrefs.h")
     #include "DarktecPrefs.h"
+    #include "DarktecPrefsUI.h"   // общая механика правки: черновик/флеш/значения
     #include "DarktecPowerState.h"
     #define UI_DARKTEC_SETTINGS 1
   #endif
@@ -709,23 +710,9 @@ public:
 
 #ifdef UI_DARKTEC_SETTINGS
     if (page == SettingsPage::DARKTEC_PAGE) {
-      const DarktecPrefs::Settings& s = DarktecPrefs::get();
+      // Значение строки — из черновика, пока есть несохранённые правки.
       char raw[12] = "";
-      if (i == 0) {
-        snprintf(raw, sizeof(raw), "%u", (unsigned)s.capacity_mah);
-      } else if (i == 1) {
-        static const char* chem_names[3] = { "Li-ion", "LiFePO4", "LTO" };
-        snprintf(raw, sizeof(raw), "%s", chem_names[s.chem < 3 ? s.chem : 0]);
-      } else if (i == 2) {
-        snprintf(raw, sizeof(raw), "%uS", (unsigned)s.cells);
-      } else if (i == 3) {
-        static const char* mod_names[4] = { "HT-RA62", "E22-30S", "E22P-868", "E22-33S" };
-        snprintf(raw, sizeof(raw), "%s", mod_names[s.module < 4 ? s.module : 1]);
-      } else if (i == 4) {
-        snprintf(raw, sizeof(raw), "%u", (unsigned)s.charge_ma);
-      } else if (i == 5) {
-        snprintf(raw, sizeof(raw), "%s", s.screen_sleep_chg ? "Off" : "On");
-      }
+      DarktecPrefsUI::formatRow(i, raw, sizeof(raw));
       if (raw[0]) {
         if (_darktec_editing && _settings_sel == i) {
           snprintf(val, val_len, "[%s]", raw);   // маркер режима правки
@@ -905,54 +892,21 @@ public:
     // модуль применяются после перезагрузки (D-8) — заметка на строке.
     // "Back" — последняя строка (i==6), возврат в корень настроек.
     if (page == SettingsPage::DARKTEC_PAGE) {
-      DarktecPrefs::Settings s = DarktecPrefs::get();
-      if (i == 0) {
-        int cap = (int)s.capacity_mah + (fwd ? 100 : -100);
-        if (cap > (int)DarktecPrefsFormat::kCapacityMax) cap = (int)DarktecPrefsFormat::kCapacityMin;
-        if (cap < (int)DarktecPrefsFormat::kCapacityMin) cap = (int)DarktecPrefsFormat::kCapacityMax;
-        s.capacity_mah = (uint16_t)cap;
-      } else if (i == 1) {
-        s.chem = (s.chem + (fwd ? 1 : 2)) % 3;
-        if (s.chem != DarktecPrefsFormat::CHEM_LTO && s.cells > 1) {
-          s.cells = 1;   // 2S доступна только для LTO — сброс с предупреждением (FR-10)
-          darktecNote(2, "cells: 1 (2S=LTO)");
-        } else {
-          darktecNote(1, "after reboot");
-        }
-      } else if (i == 2) {
-        if (s.cells == 2) {
-          s.cells = 1;
-          darktecNote(2, "after reboot");
-        } else if (s.chem == DarktecPrefsFormat::CHEM_LTO) {
-          s.cells = 2;
-          darktecNote(2, "after reboot");
-        } else {
-          darktecNote(2, "2S: LTO only");
-          return;
-        }
-      } else if (i == 3) {
-        s.module = (s.module + (fwd ? 1 : 3)) % 4;
-        darktecNote(3, "after reboot");
-      } else if (i == 4) {
-        int ma = (int)s.charge_ma + (fwd ? 100 : -100);
-        if (ma > (int)DarktecPrefsFormat::kChargeMax) ma = (int)DarktecPrefsFormat::kChargeMin;
-        if (ma < (int)DarktecPrefsFormat::kChargeMin) ma = (int)DarktecPrefsFormat::kChargeMax;
-        s.charge_ma = (uint16_t)ma;
-      } else if (i == 5) {
-        // Screen on chg (spec 0002 FR-1): On = держать экран при зарядке.
-        s.screen_sleep_chg = s.screen_sleep_chg ? 0 : 1;
-      } else if (i == 6) {
+      // Darktec (spec 0001, FR-8..11): общая механика правки — в
+      // DarktecPrefsUI (черновик, шаги, wrap, guard 2S=LTO); запись во флеш
+      // отложенная (1.2 с тишины / выход из правки / «Back»).
+      if (i == DarktecPrefsUI::kRowBack) {
         // Back — возврат в корень настроек (тот же переход, что у общей
         // строки i==0 на других подстраницах).
+        DarktecPrefsUI::flush();   // сохранить черновик перед выходом
         _settings_page = SettingsPage::ROOT;
         _settings_sel = 4;
         _settings_scroll = 0;
         _darktec_editing = false;
         return;
-      } else {
-        return;
       }
-      DarktecPrefs::save(s);
+      const DarktecPrefsUI::EditResult r = DarktecPrefsUI::changeValue(i, fwd);
+      if (r.note) darktecNote(r.note_item, r.note);
       return;
     }
 #endif
@@ -2102,6 +2056,8 @@ public:
           }
           if (c == KEY_ENTER) {
             _darktec_editing = false;
+            // выход из правки значения: фиксируем в /darktec.prefs
+            DarktecPrefsUI::flush();
             return true;
           }
           return true;  // в правке остальное глотаем
@@ -2115,6 +2071,10 @@ public:
           _settings_sel = (_settings_sel + total_n - 1) % total_n;
           while (isSettingHidden(_settings_page, _settings_sel)) _settings_sel = (_settings_sel + total_n - 1) % total_n;
           if (_settings_sel < _settings_scroll) _settings_scroll = _settings_sel;
+          else if (_settings_sel >= _settings_scroll + _settings_visible) {
+            // обёртка через конец списка: поджимаем окно снизу
+            _settings_scroll = _settings_sel - _settings_visible + 1;
+          }
           return true;
         }
         // KEY_NEXT (вниз) и KEY_ENTER на "Back" (i==5) проваливаются в generic
@@ -2916,6 +2876,18 @@ bool UITask::isButtonPressed() const {
 }
 
 void UITask::loop() {
+#ifdef UI_DARKTEC_SETTINGS
+  // spec 0002: фронт зарядки будит экран (DarktecPrefsUI::chargeFront —
+  // почему нужен сброс таймера, там же). INA при выключенном экране
+  // опрашивается здесь же — через isCharging.
+  static bool prev_charging = false;
+  if (DarktecPrefsUI::chargeFront(prev_charging, board.isCharging()) && _display != NULL) {
+    _display->turnOn();
+    _auto_off = millis() + AUTO_OFF_MILLIS;
+    _next_refresh = 0;   // перерисовать сразу
+  }
+#endif
+
   char c = 0;
   if (_preview_close_at && (long)(millis() - _preview_close_at) >= 0) {
     _preview_close_at = 0;
@@ -3051,7 +3023,14 @@ void UITask::loop() {
     // timer counts from the moment external power is removed. Off by default
     // because OLED panels burn in quickly; only enable for LCD targets or
     // where the display is replaceable.
-    if (board.isExternalPowered()) {
+    // spec 0002 (Darktec): держим экран только при РЕАЛЬНОЙ зарядке
+    // (ток в АКБ по INA3221, автомат FR-34) и включённой опции
+    // «Screen on chg». Сам по себе USB-порт (VBUS) экран не держит.
+    if (board.isCharging()
+#ifdef UI_DARKTEC_SETTINGS
+        && DarktecPrefs::get().screen_sleep_chg == 0
+#endif
+    ) {
       _auto_off = millis() + AUTO_OFF_MILLIS;
     }
 #endif
@@ -3061,6 +3040,8 @@ void UITask::loop() {
     if (home && ((HomeScreen*)home)->isOnNoisePage()) {
       _auto_off = millis() + AUTO_OFF_MILLIS;
     }
+    // spec 0002: отложенная запись правок Darktec-настроек (1.2 с тишины).
+    DarktecPrefsUI::loopTick();
 #endif
     if (_clock_dim_mode == 1) {
       // OFF: no dim while on CLOCK page
