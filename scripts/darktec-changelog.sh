@@ -7,6 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 PREV_TAG="${PREV_TAG:-}"
+TAG_END="${TAG_END:-HEAD}"   # конец диапазона; для исторической регенерации — сам тег
 VERSION="${VERSION:-unknown}"
 OUT="${1:-/tmp/darktec-changelog.md}"
 UPSTREAM_BRANCH_URL="https://github.com/rogovogor/MeshCore/tree/south_edition"
@@ -40,8 +41,13 @@ collect_log() {
   }
 }
 
+RANGE=""
 if [ -n "$PREV_TAG" ] && git rev-parse "$PREV_TAG" >/dev/null 2>&1; then
-  RANGE="${PREV_TAG}..HEAD"
+  RANGE="${PREV_TAG}..${TAG_END}"
+elif [ -n "${TAG_END:-}" ] && git rev-parse "$TAG_END" >/dev/null 2>&1; then
+  RANGE="${TAG_END}"   # первый релиз: вся история до тега (ограничено -40/-30)
+fi
+if [ -n "$RANGE" ]; then
   collect_log "$RANGE" > /tmp/darktec-commits.txt
 else
   # First versioned release: Darktec-related commits only
