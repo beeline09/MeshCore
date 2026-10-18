@@ -12,6 +12,7 @@
 #if defined(DARKTEC) && defined(__has_include)
   #if __has_include("DarktecPrefs.h")
     #include "DarktecPrefs.h"
+    #include "DarktecPrefsUI.h"   // shared edit mechanics: draft/flash/values
     #include "DarktecPowerState.h"
     #define UI_DARKTEC_SETTINGS 1
   #endif
@@ -245,48 +246,9 @@ class HomeScreen : public UIScreen {
     _darktec_note_until = millis() + 4000;
   }
 
-  void darktecChangeValue(int i, bool fwd) {
-    DarktecPrefs::Settings s = DarktecPrefs::get();
-    if (i == 0) {
-      int cap = (int)s.capacity_mah + (fwd ? 100 : -100);
-      if (cap > (int)DarktecPrefsFormat::kCapacityMax) cap = (int)DarktecPrefsFormat::kCapacityMin;
-      if (cap < (int)DarktecPrefsFormat::kCapacityMin) cap = (int)DarktecPrefsFormat::kCapacityMax;
-      s.capacity_mah = (uint16_t)cap;
-    } else if (i == 1) {
-      s.chem = (s.chem + (fwd ? 1 : 2)) % 3;
-      if (s.chem != DarktecPrefsFormat::CHEM_LTO && s.cells > 1) {
-        s.cells = 1;   // 2S is LTO-only — reset with a warning (FR-10)
-        darktecNote(2, "cells: 1 (2S=LTO)");
-      } else {
-        darktecNote(1, "after reboot");
-      }
-    } else if (i == 2) {
-      if (s.cells == 2) {
-        s.cells = 1;
-        darktecNote(2, "after reboot");
-      } else if (s.chem == DarktecPrefsFormat::CHEM_LTO) {
-        s.cells = 2;
-        darktecNote(2, "after reboot");
-      } else {
-        darktecNote(2, "2S: LTO only");
-        return;
-      }
-    } else if (i == 3) {
-      s.module = (s.module + (fwd ? 1 : 3)) % 4;
-      darktecNote(3, "after reboot");
-    } else if (i == 4) {
-      int ma = (int)s.charge_ma + (fwd ? 100 : -100);
-      if (ma > (int)DarktecPrefsFormat::kChargeMax) ma = (int)DarktecPrefsFormat::kChargeMin;
-      if (ma < (int)DarktecPrefsFormat::kChargeMin) ma = (int)DarktecPrefsFormat::kChargeMax;
-      s.charge_ma = (uint16_t)ma;
-    } else if (i == 5) {
-      // Screen on chg (spec 0002 FR-1): On = keep the display on while charging.
-      s.screen_sleep_chg = s.screen_sleep_chg ? 0 : 1;
-    } else {
-      return;
-    }
-    DarktecPrefs::save(s);
-  }
+  // Value editing itself is shared: DarktecPrefsUI::changeValue edits the
+  // in-memory draft (instant on screen); /darktec.prefs is written once —
+  // 1.2 s after the last change or when leaving the edit / the folder.
 
   void renderDarktecSettings(DisplayDriver& display) {
     display.setTextSize(1);
@@ -301,10 +263,8 @@ class HomeScreen : public UIScreen {
       return;
     }
 
-    // Folder: our settings, "< Back" as the last (bottom) row.
-    const DarktecPrefs::Settings& s = DarktecPrefs::get();
-    static const char* chem_names[3] = { "Li-ion", "LiFePO4", "LTO" };
-    static const char* mod_names[4] = { "HT-RA62", "E22-30S", "E22P-868", "E22-33S" };
+    // Folder: our settings, "< Back" as the last (bottom) row. Values come
+    // from the draft while there are unsaved edits (DarktecPrefsUI::shown).
     static const char* labels[DARKTEC_ROWS] = { "Capacity, mAh", "Batt type", "Cells", "Radio mod", "Charge, mA", "Screen on chg", "Back" };
     int y = 14;
     for (int i = 0; i < DARKTEC_ROWS; i++, y += 7) {
@@ -318,19 +278,7 @@ class HomeScreen : public UIScreen {
       display.setCursor(6, y);
       display.print(label);
       char val[12] = "";
-      if (i == 0) {
-        snprintf(val, sizeof(val), "%u", (unsigned)s.capacity_mah);
-      } else if (i == 1) {
-        snprintf(val, sizeof(val), "%s", chem_names[s.chem < 3 ? s.chem : 0]);
-      } else if (i == 2) {
-        snprintf(val, sizeof(val), "%uS", (unsigned)s.cells);
-      } else if (i == 3) {
-        snprintf(val, sizeof(val), "%s", mod_names[s.module < 4 ? s.module : 1]);
-      } else if (i == 4) {
-        snprintf(val, sizeof(val), "%u", (unsigned)s.charge_ma);
-      } else if (i == 5) {
-        snprintf(val, sizeof(val), "%s", s.screen_sleep_chg ? "Off" : "On");
-      }
+      DarktecPrefsUI::formatRow(i, val, sizeof(val));
       if (val[0]) {
         char shown[16];
         if (_darktec_editing && _darktec_sel == i) {
@@ -1065,15 +1013,18 @@ public:
       // long press leaves the edit. Nothing else responds while editing.
       if (_darktec_editing) {
         if (c == KEY_NEXT) {
-          darktecChangeValue(_darktec_sel, true);
+          const DarktecPrefsUI::EditResult r = DarktecPrefsUI::changeValue(_darktec_sel, true);
+          if (r.note) darktecNote(r.note_item, r.note);
           return true;
         }
         if (c == KEY_PREV) {
-          darktecChangeValue(_darktec_sel, false);
+          const DarktecPrefsUI::EditResult r = DarktecPrefsUI::changeValue(_darktec_sel, false);
+          if (r.note) darktecNote(r.note_item, r.note);
           return true;
         }
         if (c == KEY_ENTER) {
           _darktec_editing = false;   // done with this item
+          DarktecPrefsUI::flush();    // fix the draft to /darktec.prefs
           return true;
         }
         return true;  // absorb the rest while editing
@@ -1089,7 +1040,8 @@ public:
         return true;
       }
       if (c == KEY_ENTER) {
-        if (_darktec_sel == DARKTEC_ROWS - 1) {
+        if (_darktec_sel == DarktecPrefsUI::kRowBack) {
+          DarktecPrefsUI::flush();     // save the draft before leaving
           _darktec_in_folder = false;  // < Back — return to the settings page
         } else {
           _darktec_editing = true;     // long press on a setting — edit it
@@ -1584,6 +1536,18 @@ bool UITask::isButtonPressed() const {
 }
 
 void UITask::loop() {
+#ifdef UI_DARKTEC_SETTINGS
+  // spec 0002: charge front wakes the display (DarktecPrefsUI::chargeFront —
+  // why the timer reset is needed lives there too). INA is polled here even
+  // with the panel off — via isCharging.
+  static bool prev_charging = false;
+  if (DarktecPrefsUI::chargeFront(prev_charging, board.isCharging()) && _display != NULL) {
+    _display->turnOn();
+    _auto_off = millis() + AUTO_OFF_MILLIS;
+    _next_refresh = 0;   // redraw immediately
+  }
+#endif
+
   char c = 0;
 #if UI_HAS_JOYSTICK
   int ev = user_btn.check();
@@ -1708,7 +1672,14 @@ void UITask::loop() {
     // timer counts from the moment external power is removed. Off by default
     // because OLED panels burn in quickly; only enable for LCD targets or
     // where the display is replaceable.
-    if (board.isExternalPowered()) {
+    // spec 0002 (Darktec): keep the panel only on REAL charging (battery
+    // current via INA3221, FR-34 state machine) with the "Screen on chg"
+    // option On. The USB port (VBUS) alone must not hold the display.
+    if (board.isCharging()
+#ifdef UI_DARKTEC_SETTINGS
+        && DarktecPrefs::get().screen_sleep_chg == 0
+#endif
+    ) {
       _auto_off = millis() + AUTO_OFF_MILLIS;
     }
 #endif
@@ -1717,6 +1688,8 @@ void UITask::loop() {
     if (home && ((HomeScreen*)home)->isOnNoisePage()) {
       _auto_off = millis() + AUTO_OFF_MILLIS;
     }
+    // spec 0002: deferred write of Darktec settings edits (1.2 s of silence).
+    DarktecPrefsUI::loopTick();
 #endif
     if (millis() > _auto_off) {
       _display->turnOff();

@@ -242,11 +242,9 @@ void DarktecDisplay::translateUTF8ToBlocks(char* dest, const char* src, size_t d
 bool DarktecDisplay::isOn() {
   bool on = _isOn;
   bool charging = board.isCharging();
-  // spec 0002: при «Screen on chg: Off» зарядка экран не будит.
-  if (charging && !_was_charging && !on && !screenSleepAllowed()) {
-    turnOn();
-    on = true;
-  }
+  // spec 0002: пробуждение при фронте зарядки — в UITask::loop (там таймер
+  // авто-оффа, без сброса которого экран гаснет сразу после пробуждения).
+  // Здесь только честный отчёт о состоянии.
   _was_charging = charging;
 
   if (on && !_in_frame && _main_ui) {
