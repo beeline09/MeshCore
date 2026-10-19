@@ -147,10 +147,11 @@ struct ChargePolicy {
   uint16_t term_div;     // полный: I < capacity/term_div (C/30)
   uint16_t full_eps_mv;  // V ячейки в пределах V_full − eps
   uint16_t dwell_min;    // сколько минут держится условие full
+  uint16_t gone_ms;      // full: подпитка ниже exit_ma столько мс — зарядник ушёл
 };
 inline ChargePolicy chargePolicy() {
   return ChargePolicy{/*enter*/ 30, /*exit*/ 15, /*div*/ 30, /*eps*/ 15,
-                      /*dwell*/ 3};
+                      /*dwell*/ 3, /*gone_ms*/ 10000};
 }
 
 struct ChargeSm {
@@ -190,6 +191,7 @@ inline void updateCharge(ChargeSm& sm, const Config& cfg,
         if (sm.full_since_ms == 0) sm.full_since_ms = now_ms;
         if (now_ms - sm.full_since_ms >= (uint32_t)pol.dwell_min * 60000u) {
           sm.state = ChargeState::Full;
+          sm.full_since_ms = 0;   // поле дальше — таймер выхода из full
         }
         break;
       }
@@ -203,15 +205,27 @@ inline void updateCharge(ChargeSm& sm, const Config& cfg,
     }
 
     case ChargeState::Full:
-      // Выход из full: началась новая CC-фаза (ток выше C/30 — после
-      // «полного» подпитка ниже) либо напряжение ощутимо просело (сняли
-      // зарядку, ячейка отдаёт). CV-подпитка между exit и C/30 — остаёмся
-      // в full, иначе осцилляция full↔charging (FR-34).
+      // Выход из full: (1) началась новая CC-фаза (ток выше C/30 — после
+      // «полного» подпитка ниже); (2) напряжение ощутимо просело (сняли
+      // зарядку, ячейка отдаёт) — сразу; (3) подпитка упала ниже exit_ma на
+      // gone_ms — у подключённого зарядника она такой малой не бывает, а с
+      // вынутым кабелем ток ≈ 0 (шум единиц мА). Без (3) «вилка» висела бы
+      // до ребута: полный аккумулятор расслабляется ниже V_full − 2·eps
+      // часами. CV-подпитка в диапазоне exit..C/30 — остаёмся в full, иначе
+      // осцилляция full↔charging (FR-34).
       if (current_ma > term_ma) {
         sm.state = ChargeState::Charging;
         sm.full_since_ms = 0;
       } else if (v_cell + 2 * pol.full_eps_mv < v_full) {
         sm.state = ChargeState::Idle;
+        sm.full_since_ms = 0;
+      } else if (current_ma < pol.exit_ma) {
+        if (sm.full_since_ms == 0) sm.full_since_ms = now_ms;
+        if (now_ms - sm.full_since_ms >= (uint32_t)pol.gone_ms) {
+          sm.state = ChargeState::Idle;
+          sm.full_since_ms = 0;
+        }
+      } else {
         sm.full_since_ms = 0;
       }
       break;

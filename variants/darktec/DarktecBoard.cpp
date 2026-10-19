@@ -98,24 +98,6 @@ void DarktecBoard::pollChargeSense() {
   }
   DarktecSocModel::updateCharge(g_charge, g_soc_cfg, DarktecSocModel::chargePolicy(),
                                 (uint16_t)(mv / g_soc_cfg.cells), ma, now);
-  // Cable out (VBUS is the charger input) — charging is physically
-  // impossible, so drop any charge status. Otherwise the "full" plug /
-  // lightning icon hangs until reboot: a freshly charged cell relaxes below
-  // V_full − 2*eps for hours (the voltage-sag full→idle exit is too slow).
-  // 3 s hysteresis against power glitches; NRF52Board::isExternalPowered is
-  // the raw VBUS read, not our override.
-  if (g_charge.state != DarktecSocModel::ChargeState::Idle &&
-      !NRF52Board::isExternalPowered()) {
-    if (_vbus_gone_ms == 0) {
-      _vbus_gone_ms = now;
-    } else if (now - _vbus_gone_ms >= 3000) {
-      g_charge.state = DarktecSocModel::ChargeState::Idle;
-      g_charge.full_since_ms = 0;
-      _vbus_gone_ms = 0;
-    }
-  } else {
-    _vbus_gone_ms = 0;
-  }
   _charging = (g_charge.state != DarktecSocModel::ChargeState::Idle);
 }
 
