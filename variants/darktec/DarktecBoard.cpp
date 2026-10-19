@@ -154,23 +154,6 @@ void DarktecBoard::pollChargeSense() {
   }
   DarktecSocModel::updateCharge(g_charge, g_soc_cfg, DarktecSocModel::chargePolicy(),
                                 (uint16_t)(mv / g_soc_cfg.cells), ma, now);
-  // Кабель вынут (VBUS — вход зарядника) — заряд физически невозможен, гасим
-  // любой зарядный статус. Иначе «вилка»/молния висят до ребута: полный
-  // аккумулятор расслабляется ниже V_full − 2·eps часами (выход full→idle по
-  // просадке в автомате слишком медленный). Гистерезис 3 с от дребезга
-  // питания; NRF52Board::isExternalPowered — сырой VBUS, не наш override.
-  if (g_charge.state != DarktecSocModel::ChargeState::Idle &&
-      !NRF52Board::isExternalPowered()) {
-    if (_vbus_gone_ms == 0) {
-      _vbus_gone_ms = now;
-    } else if (now - _vbus_gone_ms >= 3000) {
-      g_charge.state = DarktecSocModel::ChargeState::Idle;
-      g_charge.full_since_ms = 0;
-      _vbus_gone_ms = 0;
-    }
-  } else {
-    _vbus_gone_ms = 0;
-  }
   _charging = (g_charge.state != DarktecSocModel::ChargeState::Idle);
 }
 

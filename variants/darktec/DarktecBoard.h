@@ -67,7 +67,6 @@ protected:
   bool _txing = false;
   bool _rxing = false;
   uint32_t _ina_last_ms = 0;
-  uint32_t _vbus_gone_ms = 0;  // с какого момента VBUS отсутствует при активном зарядном статусе
   uint32_t _tx_hold_until = 0;
   uint32_t _rx_hold_until = 0;
 

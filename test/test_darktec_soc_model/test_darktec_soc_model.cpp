@@ -131,6 +131,32 @@ TEST(ChargeAutomatonTest, FullExitsOnNewChargeOrVoltageSag) {
   EXPECT_EQ(sm3.state, ChargeState::Full);
 }
 
+TEST(ChargeAutomatonTest, FullExitsWhenCvFeedGoneBelowExit) {
+  ChargeSm sm;
+  Config c = liion();
+  ChargePolicy pol = chargePolicy();
+  // Ставим full длительной выдержкой (подпитка 100 мА, у CV-порога).
+  uint32_t t = 0;
+  for (; t <= 200000; t += 250) updateCharge(sm, c, pol, 4150, 100, t);
+  ASSERT_EQ(sm.state, ChargeState::Full);
+
+  // Кабель вынули: ток ~0, но V ещё не просел (релаксация полного
+  // аккумулятора медленная — на этом «вилка» висела до ребута).
+  // Первые gone_ms держим full (гистерезис от шума/переходных процессов).
+  updateCharge(sm, c, pol, 4150, 0, 200250);
+  EXPECT_EQ(sm.state, ChargeState::Full);
+  updateCharge(sm, c, pol, 4140, 0, 205000);   // 4.75 с из 10 с
+  EXPECT_EQ(sm.state, ChargeState::Full);
+
+  // Прошли gone_ms — idle, значок гаснет без перезагрузки.
+  updateCharge(sm, c, pol, 4140, 0, 210300);   // 10.05 с
+  EXPECT_EQ(sm.state, ChargeState::Idle);
+
+  // Подключили снова — новая CC-фаза возвращает charging.
+  updateCharge(sm, c, pol, 4140, 1500, 210500);
+  EXPECT_EQ(sm.state, ChargeState::Charging);
+}
+
 TEST(ChargeAutomatonTest, CvTailStaysChargingEvenBelowExitMa) {
   // В хвосте CV ток 40 мА < exit(15)? нет — 40 > 15. Возьмём 10 мА при
   // V у порога: near_full — остаёмся charging, несмотря на ток ниже exit.
